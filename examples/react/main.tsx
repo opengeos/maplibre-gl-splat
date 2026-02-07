@@ -38,10 +38,19 @@ function App() {
           map={map}
           position="top-right"
           collapsed={false}
-          title="Gaussian Splats"
-          defaultUrl="https://sparkjs.dev/assets/splats/butterfly.spz"
-          onSplatLoad={(url, id) => console.log('Loaded:', url, id)}
-          onSplatRemove={(id) => console.log('Removed:', id)}
+          title="3D Assets"
+          defaultUrl="https://maplibre.org/maplibre-gl-js/docs/assets/34M_17/34M_17.gltf"
+          loadDefaultUrl={true}
+          defaultLongitude={148.9819}
+          defaultLatitude={-35.39847}
+          defaultAltitude={0}
+          defaultScale={1}
+          defaultRotation={[-90, 90, 0]}
+          defaultModelRotation={[90, 0, 0]}
+          onSplatLoad={(url, id) => console.log('Splat loaded:', url, id)}
+          onSplatRemove={(id) => console.log('Splat removed:', id)}
+          onModelLoad={(url, id) => console.log('Model loaded:', url, id)}
+          onModelRemove={(id) => console.log('Model removed:', id)}
           onError={(err) => console.error('Error:', err)}
         />
       )}

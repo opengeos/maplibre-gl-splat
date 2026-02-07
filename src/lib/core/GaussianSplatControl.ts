@@ -1,5 +1,6 @@
 import type { IControl, Map as MapLibreMap, ControlPosition } from 'maplibre-gl';
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - MTP types not fully typed
 import * as MTP from '@dvt3d/maplibre-three-plugin';
@@ -27,8 +28,10 @@ export interface GaussianSplatControlOptions {
   loadDefaultUrl?: boolean;
   /** Default opacity (0-1). Default: 1. */
   defaultOpacity?: number;
-  /** Default rotation in degrees [x, y, z]. Default: [-90, 90, 0]. */
+  /** Default rotation in degrees [x, y, z] for splats. Default: [-90, 90, 0]. */
   defaultRotation?: [number, number, number];
+  /** Default rotation in degrees [x, y, z] for GLTF/GLB models. Default: [90, 0, 0]. */
+  defaultModelRotation?: [number, number, number];
   /** Default scale. Default: 1. */
   defaultScale?: number;
   /** Default longitude for splat placement. */
@@ -72,6 +75,8 @@ export type GaussianSplatEvent =
   | 'hide'
   | 'splatload'
   | 'splatremove'
+  | 'modelload'
+  | 'modelremove'
   | 'error';
 
 /**
@@ -83,6 +88,7 @@ export type GaussianSplatEventHandler = (event: {
   url?: string;
   error?: string;
   splatId?: string;
+  modelId?: string;
 }) => void;
 
 /**
@@ -93,6 +99,20 @@ interface SplatLayerInfo {
   url: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   mesh: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  rtcGroup: any;
+  longitude: number;
+  latitude: number;
+  altitude: number;
+}
+
+/**
+ * Internal model (GLTF/GLB) layer info.
+ */
+interface ModelLayerInfo {
+  id: string;
+  url: string;
+  scene: THREE.Group;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   rtcGroup: any;
   longitude: number;
@@ -113,6 +133,7 @@ const DEFAULT_OPTIONS: Required<GaussianSplatControlOptions> = {
   loadDefaultUrl: false,
   defaultOpacity: 1,
   defaultRotation: [-90, 90, 0],
+  defaultModelRotation: [90, 0, 0],
   defaultScale: 1,
   defaultLongitude: 0,
   defaultLatitude: 0,
@@ -158,7 +179,11 @@ export class GaussianSplatControl implements IControl {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _mapScene?: any;
   private _splatLayers: Map<string, SplatLayerInfo> = new Map();
+  private _modelLayers: Map<string, ModelLayerInfo> = new Map();
   private _layerCounter = 0;
+  private _modelCounter = 0;
+  private _gltfLoader?: GLTFLoader;
+  private _idleHandler?: () => void;
 
   constructor(options?: GaussianSplatControlOptions) {
     this._options = { ...DEFAULT_OPTIONS, ...options };
@@ -189,16 +214,26 @@ export class GaussianSplatControl implements IControl {
 
     // Auto-load default URL if specified
     if (this._options.loadDefaultUrl && this._options.defaultUrl) {
-      map.once('idle', () => {
-        this.loadSplat(this._options.defaultUrl);
-      });
+      this._idleHandler = () => {
+        // Check if control is still attached (handles React StrictMode cleanup)
+        if (this._map && this._mapScene) {
+          this.load(this._options.defaultUrl);
+        }
+      };
+      map.once('idle', this._idleHandler);
     }
 
     return this._container;
   }
 
   onRemove(): void {
-    this._removeAllSplats();
+    // Remove idle handler if pending
+    if (this._idleHandler && this._map) {
+      this._map.off('idle', this._idleHandler);
+      this._idleHandler = undefined;
+    }
+
+    this._removeAllLayers();
 
     this._mapScene = undefined;
     this._map = undefined;
@@ -272,6 +307,41 @@ export class GaussianSplatControl implements IControl {
    */
   off(event: GaussianSplatEvent, handler: GaussianSplatEventHandler): void {
     this._eventHandlers.get(event)?.delete(handler);
+  }
+
+  /**
+   * Load a 3D asset from a URL (auto-detects file type).
+   * Routes GLTF/GLB files to loadModel(), all others to loadSplat().
+   */
+  async load(
+    url: string,
+    options?: {
+      longitude?: number;
+      latitude?: number;
+      altitude?: number;
+      rotation?: [number, number, number];
+      scale?: number;
+    }
+  ): Promise<string> {
+    const extension = this._getFileExtension(url);
+    if (extension === 'gltf' || extension === 'glb') {
+      // Use GLTF-specific rotation defaults if not explicitly set
+      const modelOptions = { ...options };
+      if (!modelOptions.rotation) {
+        modelOptions.rotation = this._options.defaultModelRotation;
+      }
+      return this.loadModel(url, modelOptions);
+    }
+    return this.loadSplat(url, options);
+  }
+
+  /**
+   * Get the file extension from a URL.
+   */
+  private _getFileExtension(url: string): string {
+    const pathname = new URL(url, 'http://dummy').pathname;
+    const ext = pathname.split('.').pop()?.toLowerCase() || '';
+    return ext;
   }
 
   /**
@@ -358,7 +428,7 @@ export class GaussianSplatControl implements IControl {
       }
 
       this._state.hasLayer = true;
-      this._state.layerCount = this._splatLayers.size;
+      this._state.layerCount = this._splatLayers.size + this._modelLayers.size;
       this._state.loading = false;
       this._state.status = `Loaded: ${this._getFilename(url)}`;
       this._render();
@@ -375,6 +445,145 @@ export class GaussianSplatControl implements IControl {
   }
 
   /**
+   * Load a GLTF/GLB 3D model from a URL.
+   *
+   * @example
+   * ```typescript
+   * const modelId = await control.loadModel(
+   *   'https://maplibre.org/maplibre-gl-js/docs/assets/34M_17/34M_17.gltf',
+   *   { longitude: 148.9819, latitude: -35.39847 }
+   * );
+   * ```
+   */
+  async loadModel(
+    url: string,
+    options?: {
+      longitude?: number;
+      latitude?: number;
+      altitude?: number;
+      rotation?: [number, number, number];
+      scale?: number;
+    }
+  ): Promise<string> {
+    if (!this._map || !this._mapScene) {
+      throw new Error('Map not initialized');
+    }
+
+    const lng = options?.longitude ?? (this._state.longitude || this._map.getCenter().lng);
+    const lat = options?.latitude ?? (this._state.latitude || this._map.getCenter().lat);
+    const alt = options?.altitude ?? (this._state.altitude || 0);
+    // Use model-specific rotation defaults for GLTF/GLB
+    const rotation = options?.rotation ?? this._options.defaultModelRotation;
+    const scale = options?.scale ?? this._state.scale;
+
+    this._state.url = url;
+    this._state.loading = true;
+    this._state.error = null;
+    this._state.status = 'Loading model...';
+    this._state.longitude = lng;
+    this._state.latitude = lat;
+    this._state.altitude = alt;
+    this._render();
+
+    try {
+      // Initialize GLTF loader if not already done
+      if (!this._gltfLoader) {
+        this._gltfLoader = new GLTFLoader();
+      }
+
+      // Create RTC group for georeferenced positioning
+      // GLTF models need rotation to align with map coordinate system
+      // Create RTC group for georeferenced positioning
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rtcGroup = (MTP.Creator as any).createMercatorRTCGroup(
+        [lng, lat, alt],
+        [
+          THREE.MathUtils.degToRad(rotation[0]),
+          THREE.MathUtils.degToRad(rotation[1]),
+          THREE.MathUtils.degToRad(rotation[2]),
+        ],
+        scale // Pass user scale to RTC group for mercator coordinate scaling
+      );
+
+      // Load the GLTF model
+      const gltf = await this._gltfLoader.loadAsync(url);
+      const modelScene = gltf.scene;
+
+      // Apply scale with Y-axis flip for proper GLTF orientation
+      // MapLibre uses a different coordinate system than GLTF
+      // Scale is applied to both RTC group and model (like splats)
+      modelScene.scale.set(scale, -scale, scale);
+
+      // Add model to RTC group and scene (lighting is handled by the global scene)
+      rtcGroup.add(modelScene);
+      this._mapScene.addObject(rtcGroup);
+
+      // Store layer info
+      const layerId = `model-${this._modelCounter++}`;
+      this._modelLayers.set(layerId, {
+        id: layerId,
+        url,
+        scene: modelScene,
+        rtcGroup,
+        longitude: lng,
+        latitude: lat,
+        altitude: alt,
+      });
+
+      // Fly to location
+      if (this._options.flyTo) {
+        this._map.flyTo({
+          center: [lng, lat],
+          zoom: this._options.flyToZoom,
+          pitch: 60,
+          duration: 1500,
+        });
+      }
+
+      this._state.hasLayer = true;
+      this._state.layerCount = this._splatLayers.size + this._modelLayers.size;
+      this._state.loading = false;
+      this._state.status = `Loaded: ${this._getFilename(url)}`;
+      this._render();
+      this._emit('modelload', { url, modelId: layerId });
+
+      return layerId;
+    } catch (err) {
+      this._state.loading = false;
+      this._state.error = `Failed to load: ${err instanceof Error ? err.message : String(err)}`;
+      this._render();
+      this._emit('error', { error: this._state.error });
+      throw err;
+    }
+  }
+
+  /**
+   * Remove a model layer by ID.
+   */
+  removeModel(layerId: string): void {
+    const layer = this._modelLayers.get(layerId);
+    if (!layer || !this._mapScene) return;
+
+    this._mapScene.removeObject(layer.rtcGroup);
+    this._modelLayers.delete(layerId);
+
+    this._state.hasLayer = this._splatLayers.size > 0 || this._modelLayers.size > 0;
+    this._state.layerCount = this._splatLayers.size + this._modelLayers.size;
+    this._state.status = null;
+    this._render();
+    this._emit('modelremove', { modelId: layerId });
+  }
+
+  /**
+   * Remove all model layers.
+   */
+  removeAllModels(): void {
+    for (const layerId of this._modelLayers.keys()) {
+      this.removeModel(layerId);
+    }
+  }
+
+  /**
    * Remove a splat layer by ID.
    */
   removeSplat(layerId: string): void {
@@ -384,8 +593,8 @@ export class GaussianSplatControl implements IControl {
     this._mapScene.removeObject(layer.rtcGroup);
     this._splatLayers.delete(layerId);
 
-    this._state.hasLayer = this._splatLayers.size > 0;
-    this._state.layerCount = this._splatLayers.size;
+    this._state.hasLayer = this._splatLayers.size > 0 || this._modelLayers.size > 0;
+    this._state.layerCount = this._splatLayers.size + this._modelLayers.size;
     this._state.status = null;
     this._render();
     this._emit('splatremove', { splatId: layerId });
@@ -395,7 +604,7 @@ export class GaussianSplatControl implements IControl {
    * Remove all splat layers.
    */
   removeAllSplats(): void {
-    this._removeAllSplats();
+    this._removeAllLayers();
   }
 
   /**
@@ -419,15 +628,18 @@ export class GaussianSplatControl implements IControl {
     };
   }
 
-  private _removeAllSplats(): void {
+  private _removeAllLayers(): void {
     for (const [layerId] of this._splatLayers) {
       this.removeSplat(layerId);
+    }
+    for (const [layerId] of this._modelLayers) {
+      this.removeModel(layerId);
     }
   }
 
   private _emit(
     event: GaussianSplatEvent,
-    extra?: { url?: string; error?: string; splatId?: string }
+    extra?: { url?: string; error?: string; splatId?: string; modelId?: string }
   ): void {
     const handlers = this._eventHandlers.get(event);
     if (!handlers) return;
@@ -540,10 +752,10 @@ export class GaussianSplatControl implements IControl {
     panel.appendChild(header);
 
     // URL input
-    const urlGroup = this._createFormGroup('Splat URL (.splat, .ply, .spz, .ksplat, .sog)');
+    const urlGroup = this._createFormGroup('3D Asset URL (.splat, .ply, .spz, .gltf, .glb)');
     const urlInput = document.createElement('input');
     urlInput.type = 'text';
-    urlInput.placeholder = 'https://example.com/scene.splat';
+    urlInput.placeholder = 'https://example.com/model.gltf';
     urlInput.value = this._state.url;
     urlInput.style.cssText = `
       width: 100%;
@@ -580,6 +792,27 @@ export class GaussianSplatControl implements IControl {
     locGroup.appendChild(locRow);
     panel.appendChild(locGroup);
 
+    // Rotation inputs (X, Y, Z in degrees)
+    const rotGroup = this._createFormGroup('Rotation (°)');
+    const rotRow = document.createElement('div');
+    rotRow.style.cssText = 'display: flex; gap: 6px;';
+
+    const rotXInput = this._createSmallInput('X', String(this._state.rotation[0]), (val) => {
+      this._state.rotation[0] = Number(val) || 0;
+    });
+    const rotYInput = this._createSmallInput('Y', String(this._state.rotation[1]), (val) => {
+      this._state.rotation[1] = Number(val) || 0;
+    });
+    const rotZInput = this._createSmallInput('Z', String(this._state.rotation[2]), (val) => {
+      this._state.rotation[2] = Number(val) || 0;
+    });
+
+    rotRow.appendChild(rotXInput);
+    rotRow.appendChild(rotYInput);
+    rotRow.appendChild(rotZInput);
+    rotGroup.appendChild(rotRow);
+    panel.appendChild(rotGroup);
+
     // Scale input
     const scaleGroup = this._createFormGroup('Scale');
     const scaleInput = document.createElement('input');
@@ -602,7 +835,7 @@ export class GaussianSplatControl implements IControl {
 
     // Load button
     const loadBtn = document.createElement('button');
-    loadBtn.textContent = 'Load Splat';
+    loadBtn.textContent = 'Load 3D Asset';
     loadBtn.disabled = this._state.loading || !this._state.url;
     loadBtn.style.cssText = `
       width: 100%;
@@ -619,7 +852,13 @@ export class GaussianSplatControl implements IControl {
     `;
     loadBtn.addEventListener('click', () => {
       if (this._state.url) {
-        this.loadSplat(this._state.url);
+        this.load(this._state.url, {
+          longitude: this._state.longitude,
+          latitude: this._state.latitude,
+          altitude: this._state.altitude,
+          rotation: this._state.rotation,
+          scale: this._state.scale,
+        });
       }
     });
     panel.appendChild(loadBtn);
@@ -633,8 +872,9 @@ export class GaussianSplatControl implements IControl {
       panel.appendChild(this._createStatus(this._state.status, 'success'));
     }
 
-    // Layer list
-    if (this._splatLayers.size > 0) {
+    // Layer list (splats and models)
+    const totalLayers = this._splatLayers.size + this._modelLayers.size;
+    if (totalLayers > 0) {
       const listDiv = document.createElement('div');
       listDiv.style.cssText = `
         margin-top: 16px;
@@ -643,44 +883,23 @@ export class GaussianSplatControl implements IControl {
       `;
 
       const listHeader = document.createElement('div');
-      listHeader.textContent = `Layers (${this._splatLayers.size})`;
+      listHeader.textContent = `Layers (${totalLayers})`;
       listHeader.style.cssText = 'font-size: 12px; font-weight: 500; color: #555; margin-bottom: 8px;';
       listDiv.appendChild(listHeader);
 
+      // Splat layers
       for (const [layerId, layer] of this._splatLayers) {
-        const item = document.createElement('div');
-        item.style.cssText = `
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 6px 8px;
-          background: #f8f8f8;
-          border-radius: 4px;
-          margin-bottom: 4px;
-          font-size: 11px;
-        `;
-
-        const label = document.createElement('span');
-        label.textContent = this._getFilename(layer.url);
-        label.style.cssText = 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
-        item.appendChild(label);
-
-        const removeBtn = document.createElement('button');
-        removeBtn.innerHTML = '×';
-        removeBtn.title = 'Remove';
-        removeBtn.style.cssText = `
-          border: none;
-          background: transparent;
-          cursor: pointer;
-          color: #999;
-          font-size: 14px;
-          padding: 0 4px;
-        `;
-        removeBtn.addEventListener('click', () => {
+        const item = this._createLayerItem(this._getFilename(layer.url), 'splat', () => {
           this.removeSplat(layerId);
         });
-        item.appendChild(removeBtn);
+        listDiv.appendChild(item);
+      }
 
+      // Model layers
+      for (const [layerId, layer] of this._modelLayers) {
+        const item = this._createLayerItem(this._getFilename(layer.url), 'model', () => {
+          this.removeModel(layerId);
+        });
         listDiv.appendChild(item);
       }
 
@@ -724,6 +943,36 @@ export class GaussianSplatControl implements IControl {
     return input;
   }
 
+  private _createSmallInput(placeholder: string, value: string, onChange: (v: string) => void): HTMLElement {
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'flex: 1; display: flex; flex-direction: column; gap: 2px;';
+
+    const label = document.createElement('span');
+    label.textContent = placeholder;
+    label.style.cssText = 'font-size: 9px; color: #888; text-align: center;';
+
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.step = '1';
+    input.value = value;
+    input.style.cssText = `
+      width: 100%;
+      padding: 4px 6px;
+      font-size: 11px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      box-sizing: border-box;
+      text-align: center;
+    `;
+    input.addEventListener('input', () => {
+      onChange(input.value);
+    });
+
+    wrapper.appendChild(label);
+    wrapper.appendChild(input);
+    return wrapper;
+  }
+
   private _createStatus(message: string, type: 'info' | 'error' | 'success'): HTMLElement {
     const status = document.createElement('div');
     const colors = {
@@ -741,6 +990,42 @@ export class GaussianSplatControl implements IControl {
       color: ${colors[type].color};
     `;
     return status;
+  }
+
+  private _createLayerItem(name: string, type: 'splat' | 'model', onRemove: () => void): HTMLElement {
+    const item = document.createElement('div');
+    item.style.cssText = `
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 8px;
+      background: #f8f8f8;
+      border-radius: 4px;
+      margin-bottom: 4px;
+      font-size: 11px;
+    `;
+
+    const label = document.createElement('span');
+    const typeIcon = type === 'model' ? '📦 ' : '✨ ';
+    label.textContent = typeIcon + name;
+    label.style.cssText = 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+    item.appendChild(label);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.innerHTML = '×';
+    removeBtn.title = 'Remove';
+    removeBtn.style.cssText = `
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      color: #999;
+      font-size: 14px;
+      padding: 0 4px;
+    `;
+    removeBtn.addEventListener('click', onRemove);
+    item.appendChild(removeBtn);
+
+    return item;
   }
 
   private _getFilename(url: string): string {
