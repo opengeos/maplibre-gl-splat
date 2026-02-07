@@ -73,6 +73,8 @@ export type GaussianSplatEvent =
   | 'hide'
   | 'splatload'
   | 'splatremove'
+  | 'modelload'
+  | 'modelremove'
   | 'error';
 
 /**
@@ -84,6 +86,7 @@ export type GaussianSplatEventHandler = (event: {
   url?: string;
   error?: string;
   splatId?: string;
+  modelId?: string;
 }) => void;
 
 /**
@@ -216,7 +219,7 @@ export class GaussianSplatControl implements IControl {
   }
 
   onRemove(): void {
-    this._removeAllSplats();
+    this._removeAllLayers();
 
     this._mapScene = undefined;
     this._map = undefined;
@@ -406,7 +409,7 @@ export class GaussianSplatControl implements IControl {
       }
 
       this._state.hasLayer = true;
-      this._state.layerCount = this._splatLayers.size;
+      this._state.layerCount = this._splatLayers.size + this._modelLayers.size;
       this._state.loading = false;
       this._state.status = `Loaded: ${this._getFilename(url)}`;
       this._render();
@@ -487,20 +490,7 @@ export class GaussianSplatControl implements IControl {
       // Apply scale to the model
       modelScene.scale.setScalar(scale);
 
-      // Add lighting for the model
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-      directionalLight.position.set(0, -70, 100).normalize();
-      rtcGroup.add(directionalLight);
-
-      const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.5);
-      directionalLight2.position.set(0, 70, 100).normalize();
-      rtcGroup.add(directionalLight2);
-
-      // Add ambient light for better visibility
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
-      rtcGroup.add(ambientLight);
-
-      // Add model to RTC group and scene
+      // Add model to RTC group and scene (lighting is handled by the global scene)
       rtcGroup.add(modelScene);
       this._mapScene.addObject(rtcGroup);
 
@@ -531,7 +521,7 @@ export class GaussianSplatControl implements IControl {
       this._state.loading = false;
       this._state.status = `Loaded: ${this._getFilename(url)}`;
       this._render();
-      this._emit('splatload', { url, splatId: layerId });
+      this._emit('modelload', { url, modelId: layerId });
 
       return layerId;
     } catch (err) {
@@ -557,7 +547,7 @@ export class GaussianSplatControl implements IControl {
     this._state.layerCount = this._splatLayers.size + this._modelLayers.size;
     this._state.status = null;
     this._render();
-    this._emit('splatremove', { splatId: layerId });
+    this._emit('modelremove', { modelId: layerId });
   }
 
   /**
@@ -579,8 +569,8 @@ export class GaussianSplatControl implements IControl {
     this._mapScene.removeObject(layer.rtcGroup);
     this._splatLayers.delete(layerId);
 
-    this._state.hasLayer = this._splatLayers.size > 0;
-    this._state.layerCount = this._splatLayers.size;
+    this._state.hasLayer = this._splatLayers.size > 0 || this._modelLayers.size > 0;
+    this._state.layerCount = this._splatLayers.size + this._modelLayers.size;
     this._state.status = null;
     this._render();
     this._emit('splatremove', { splatId: layerId });
@@ -590,7 +580,7 @@ export class GaussianSplatControl implements IControl {
    * Remove all splat layers.
    */
   removeAllSplats(): void {
-    this._removeAllSplats();
+    this._removeAllLayers();
   }
 
   /**
@@ -614,7 +604,7 @@ export class GaussianSplatControl implements IControl {
     };
   }
 
-  private _removeAllSplats(): void {
+  private _removeAllLayers(): void {
     for (const [layerId] of this._splatLayers) {
       this.removeSplat(layerId);
     }
@@ -625,7 +615,7 @@ export class GaussianSplatControl implements IControl {
 
   private _emit(
     event: GaussianSplatEvent,
-    extra?: { url?: string; error?: string; splatId?: string }
+    extra?: { url?: string; error?: string; splatId?: string; modelId?: string }
   ): void {
     const handlers = this._eventHandlers.get(event);
     if (!handlers) return;

@@ -36,8 +36,16 @@ splatControl.on('splatremove', (event) => {
   console.log('Splat removed:', event.splatId);
 });
 
+splatControl.on('modelload', (event) => {
+  console.log('Model loaded:', event.url, 'id:', event.modelId);
+});
+
+splatControl.on('modelremove', (event) => {
+  console.log('Model removed:', event.modelId);
+});
+
 splatControl.on('error', (event) => {
-  console.error('Splat error:', event.error);
+  console.error('Error:', event.error);
 });
 
 // Log when map is ready
