@@ -314,7 +314,12 @@ export class GaussianSplatControl implements IControl {
   ): Promise<string> {
     const extension = this._getFileExtension(url);
     if (extension === 'gltf' || extension === 'glb') {
-      return this.loadModel(url, options);
+      // Use GLTF-specific rotation defaults if not explicitly set
+      const modelOptions = { ...options };
+      if (!modelOptions.rotation) {
+        modelOptions.rotation = this._options.defaultModelRotation;
+      }
+      return this.loadModel(url, modelOptions);
     }
     return this.loadSplat(url, options);
   }
@@ -834,7 +839,13 @@ export class GaussianSplatControl implements IControl {
     `;
     loadBtn.addEventListener('click', () => {
       if (this._state.url) {
-        this.load(this._state.url);
+        this.load(this._state.url, {
+          longitude: this._state.longitude,
+          latitude: this._state.latitude,
+          altitude: this._state.altitude,
+          rotation: this._state.rotation,
+          scale: this._state.scale,
+        });
       }
     });
     panel.appendChild(loadBtn);
