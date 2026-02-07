@@ -1,5 +1,6 @@
 import type { IControl, Map as MapLibreMap, ControlPosition } from 'maplibre-gl';
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - MTP types not fully typed
 import * as MTP from '@dvt3d/maplibre-three-plugin';
@@ -101,6 +102,20 @@ interface SplatLayerInfo {
 }
 
 /**
+ * Internal model (GLTF/GLB) layer info.
+ */
+interface ModelLayerInfo {
+  id: string;
+  url: string;
+  scene: THREE.Group;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  rtcGroup: any;
+  longitude: number;
+  latitude: number;
+  altitude: number;
+}
+
+/**
  * Default options for the GaussianSplatControl.
  */
 const DEFAULT_OPTIONS: Required<GaussianSplatControlOptions> = {
@@ -158,7 +173,10 @@ export class GaussianSplatControl implements IControl {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _mapScene?: any;
   private _splatLayers: Map<string, SplatLayerInfo> = new Map();
+  private _modelLayers: Map<string, ModelLayerInfo> = new Map();
   private _layerCounter = 0;
+  private _modelCounter = 0;
+  private _gltfLoader?: GLTFLoader;
 
   constructor(options?: GaussianSplatControlOptions) {
     this._options = { ...DEFAULT_OPTIONS, ...options };
@@ -375,6 +393,153 @@ export class GaussianSplatControl implements IControl {
   }
 
   /**
+   * Load a GLTF/GLB 3D model from a URL.
+   *
+   * @example
+   * ```typescript
+   * const modelId = await control.loadModel(
+   *   'https://maplibre.org/maplibre-gl-js/docs/assets/34M_17/34M_17.gltf',
+   *   { longitude: 148.9819, latitude: -35.39847 }
+   * );
+   * ```
+   */
+  async loadModel(
+    url: string,
+    options?: {
+      longitude?: number;
+      latitude?: number;
+      altitude?: number;
+      rotation?: [number, number, number];
+      scale?: number;
+    }
+  ): Promise<string> {
+    if (!this._map || !this._mapScene) {
+      throw new Error('Map not initialized');
+    }
+
+    const lng = options?.longitude ?? (this._state.longitude || this._map.getCenter().lng);
+    const lat = options?.latitude ?? (this._state.latitude || this._map.getCenter().lat);
+    const alt = options?.altitude ?? (this._state.altitude || 0);
+    const rotation = options?.rotation ?? this._state.rotation;
+    const scale = options?.scale ?? this._state.scale;
+
+    this._state.url = url;
+    this._state.loading = true;
+    this._state.error = null;
+    this._state.status = 'Loading model...';
+    this._state.longitude = lng;
+    this._state.latitude = lat;
+    this._state.altitude = alt;
+    this._render();
+
+    try {
+      // Initialize GLTF loader if not already done
+      if (!this._gltfLoader) {
+        this._gltfLoader = new GLTFLoader();
+      }
+
+      // Create RTC group for georeferenced positioning
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rtcGroup = (MTP.Creator as any).createMercatorRTCGroup(
+        [lng, lat, alt],
+        [
+          THREE.MathUtils.degToRad(rotation[0]),
+          THREE.MathUtils.degToRad(rotation[1]),
+          THREE.MathUtils.degToRad(rotation[2]),
+        ],
+        scale
+      );
+
+      // Load the GLTF model
+      const gltf = await this._gltfLoader.loadAsync(url);
+      const modelScene = gltf.scene;
+
+      // Apply scale to the model
+      modelScene.scale.setScalar(scale);
+
+      // Add lighting for the model
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+      directionalLight.position.set(0, -70, 100).normalize();
+      rtcGroup.add(directionalLight);
+
+      const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.5);
+      directionalLight2.position.set(0, 70, 100).normalize();
+      rtcGroup.add(directionalLight2);
+
+      // Add ambient light for better visibility
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+      rtcGroup.add(ambientLight);
+
+      // Add model to RTC group and scene
+      rtcGroup.add(modelScene);
+      this._mapScene.addObject(rtcGroup);
+
+      // Store layer info
+      const layerId = `model-${this._modelCounter++}`;
+      this._modelLayers.set(layerId, {
+        id: layerId,
+        url,
+        scene: modelScene,
+        rtcGroup,
+        longitude: lng,
+        latitude: lat,
+        altitude: alt,
+      });
+
+      // Fly to location
+      if (this._options.flyTo) {
+        this._map.flyTo({
+          center: [lng, lat],
+          zoom: this._options.flyToZoom,
+          pitch: 60,
+          duration: 1500,
+        });
+      }
+
+      this._state.hasLayer = true;
+      this._state.layerCount = this._splatLayers.size + this._modelLayers.size;
+      this._state.loading = false;
+      this._state.status = `Loaded: ${this._getFilename(url)}`;
+      this._render();
+      this._emit('splatload', { url, splatId: layerId });
+
+      return layerId;
+    } catch (err) {
+      this._state.loading = false;
+      this._state.error = `Failed to load: ${err instanceof Error ? err.message : String(err)}`;
+      this._render();
+      this._emit('error', { error: this._state.error });
+      throw err;
+    }
+  }
+
+  /**
+   * Remove a model layer by ID.
+   */
+  removeModel(layerId: string): void {
+    const layer = this._modelLayers.get(layerId);
+    if (!layer || !this._mapScene) return;
+
+    this._mapScene.removeObject(layer.rtcGroup);
+    this._modelLayers.delete(layerId);
+
+    this._state.hasLayer = this._splatLayers.size > 0 || this._modelLayers.size > 0;
+    this._state.layerCount = this._splatLayers.size + this._modelLayers.size;
+    this._state.status = null;
+    this._render();
+    this._emit('splatremove', { splatId: layerId });
+  }
+
+  /**
+   * Remove all model layers.
+   */
+  removeAllModels(): void {
+    for (const layerId of this._modelLayers.keys()) {
+      this.removeModel(layerId);
+    }
+  }
+
+  /**
    * Remove a splat layer by ID.
    */
   removeSplat(layerId: string): void {
@@ -422,6 +587,9 @@ export class GaussianSplatControl implements IControl {
   private _removeAllSplats(): void {
     for (const [layerId] of this._splatLayers) {
       this.removeSplat(layerId);
+    }
+    for (const [layerId] of this._modelLayers) {
+      this.removeModel(layerId);
     }
   }
 
