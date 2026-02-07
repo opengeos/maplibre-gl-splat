@@ -40,6 +40,7 @@ function App() {
           collapsed={false}
           title="3D Assets"
           defaultUrl="https://maplibre.org/maplibre-gl-js/docs/assets/34M_17/34M_17.gltf"
+          loadDefaultUrl={true}
           defaultLongitude={148.9819}
           defaultLatitude={-35.39847}
           defaultAltitude={0}
