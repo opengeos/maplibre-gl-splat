@@ -28,8 +28,10 @@ export interface GaussianSplatControlOptions {
   loadDefaultUrl?: boolean;
   /** Default opacity (0-1). Default: 1. */
   defaultOpacity?: number;
-  /** Default rotation in degrees [x, y, z]. Default: [-90, 90, 0]. */
+  /** Default rotation in degrees [x, y, z] for splats. Default: [-90, 90, 0]. */
   defaultRotation?: [number, number, number];
+  /** Default rotation in degrees [x, y, z] for GLTF/GLB models. Default: [90, 0, 0]. */
+  defaultModelRotation?: [number, number, number];
   /** Default scale. Default: 1. */
   defaultScale?: number;
   /** Default longitude for splat placement. */
@@ -131,6 +133,7 @@ const DEFAULT_OPTIONS: Required<GaussianSplatControlOptions> = {
   loadDefaultUrl: false,
   defaultOpacity: 1,
   defaultRotation: [-90, 90, 0],
+  defaultModelRotation: [90, 0, 0],
   defaultScale: 1,
   defaultLongitude: 0,
   defaultLatitude: 0,
@@ -453,7 +456,8 @@ export class GaussianSplatControl implements IControl {
     const lng = options?.longitude ?? (this._state.longitude || this._map.getCenter().lng);
     const lat = options?.latitude ?? (this._state.latitude || this._map.getCenter().lat);
     const alt = options?.altitude ?? (this._state.altitude || 0);
-    const rotation = options?.rotation ?? this._state.rotation;
+    // Use model-specific rotation defaults for GLTF/GLB
+    const rotation = options?.rotation ?? this._options.defaultModelRotation;
     const scale = options?.scale ?? this._state.scale;
 
     this._state.url = url;
@@ -472,6 +476,7 @@ export class GaussianSplatControl implements IControl {
       }
 
       // Create RTC group for georeferenced positioning
+      // GLTF models need rotation to align with map coordinate system
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const rtcGroup = (MTP.Creator as any).createMercatorRTCGroup(
         [lng, lat, alt],
@@ -487,8 +492,9 @@ export class GaussianSplatControl implements IControl {
       const gltf = await this._gltfLoader.loadAsync(url);
       const modelScene = gltf.scene;
 
-      // Apply scale to the model
-      modelScene.scale.setScalar(scale);
+      // Apply scale with Y-axis flip for proper GLTF orientation
+      // MapLibre uses a different coordinate system than GLTF
+      modelScene.scale.set(scale, -scale, scale);
 
       // Add model to RTC group and scene (lighting is handled by the global scene)
       rtcGroup.add(modelScene);
@@ -728,10 +734,10 @@ export class GaussianSplatControl implements IControl {
     panel.appendChild(header);
 
     // URL input
-    const urlGroup = this._createFormGroup('Splat URL (.splat, .ply, .spz, .ksplat, .sog)');
+    const urlGroup = this._createFormGroup('3D Asset URL (.splat, .ply, .spz, .gltf, .glb)');
     const urlInput = document.createElement('input');
     urlInput.type = 'text';
-    urlInput.placeholder = 'https://example.com/scene.splat';
+    urlInput.placeholder = 'https://example.com/model.gltf';
     urlInput.value = this._state.url;
     urlInput.style.cssText = `
       width: 100%;
@@ -768,6 +774,27 @@ export class GaussianSplatControl implements IControl {
     locGroup.appendChild(locRow);
     panel.appendChild(locGroup);
 
+    // Rotation inputs (X, Y, Z in degrees)
+    const rotGroup = this._createFormGroup('Rotation (°)');
+    const rotRow = document.createElement('div');
+    rotRow.style.cssText = 'display: flex; gap: 6px;';
+
+    const rotXInput = this._createSmallInput('X', String(this._state.rotation[0]), (val) => {
+      this._state.rotation[0] = Number(val) || 0;
+    });
+    const rotYInput = this._createSmallInput('Y', String(this._state.rotation[1]), (val) => {
+      this._state.rotation[1] = Number(val) || 0;
+    });
+    const rotZInput = this._createSmallInput('Z', String(this._state.rotation[2]), (val) => {
+      this._state.rotation[2] = Number(val) || 0;
+    });
+
+    rotRow.appendChild(rotXInput);
+    rotRow.appendChild(rotYInput);
+    rotRow.appendChild(rotZInput);
+    rotGroup.appendChild(rotRow);
+    panel.appendChild(rotGroup);
+
     // Scale input
     const scaleGroup = this._createFormGroup('Scale');
     const scaleInput = document.createElement('input');
@@ -790,7 +817,7 @@ export class GaussianSplatControl implements IControl {
 
     // Load button
     const loadBtn = document.createElement('button');
-    loadBtn.textContent = 'Load Splat';
+    loadBtn.textContent = 'Load 3D Asset';
     loadBtn.disabled = this._state.loading || !this._state.url;
     loadBtn.style.cssText = `
       width: 100%;
@@ -910,6 +937,36 @@ export class GaussianSplatControl implements IControl {
       onChange(Number(input.value) || 0);
     });
     return input;
+  }
+
+  private _createSmallInput(placeholder: string, value: string, onChange: (v: string) => void): HTMLElement {
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'flex: 1; display: flex; flex-direction: column; gap: 2px;';
+
+    const label = document.createElement('span');
+    label.textContent = placeholder;
+    label.style.cssText = 'font-size: 9px; color: #888; text-align: center;';
+
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.step = '1';
+    input.value = value;
+    input.style.cssText = `
+      width: 100%;
+      padding: 4px 6px;
+      font-size: 11px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      box-sizing: border-box;
+      text-align: center;
+    `;
+    input.addEventListener('input', () => {
+      onChange(input.value);
+    });
+
+    wrapper.appendChild(label);
+    wrapper.appendChild(input);
+    return wrapper;
   }
 
   private _createStatus(message: string, type: 'info' | 'error' | 'success'): HTMLElement {
