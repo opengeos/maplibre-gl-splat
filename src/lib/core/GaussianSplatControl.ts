@@ -325,9 +325,11 @@ export class GaussianSplatControl implements IControl {
   ): Promise<string> {
     const extension = this._getFileExtension(url);
     if (extension === 'gltf' || extension === 'glb') {
-      // For GLTF, don't pass rotation - let loadModel use its defaults
+      // Use GLTF-specific rotation defaults if not explicitly set
       const modelOptions = { ...options };
-      delete modelOptions.rotation;
+      if (!modelOptions.rotation) {
+        modelOptions.rotation = this._options.defaultModelRotation;
+      }
       return this.loadModel(url, modelOptions);
     }
     return this.loadSplat(url, options);
@@ -490,25 +492,26 @@ export class GaussianSplatControl implements IControl {
       }
 
       // Create RTC group for georeferenced positioning
-      // Pass no rotation to RTC group - we'll handle rotation on the model
+      // GLTF models need rotation to align with map coordinate system
+      // Create RTC group for georeferenced positioning
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const rtcGroup = (MTP.Creator as any).createMercatorRTCGroup(
         [lng, lat, alt],
-        [0, 0, 0], // No rotation on RTC group
-        scale
+        [
+          THREE.MathUtils.degToRad(rotation[0]),
+          THREE.MathUtils.degToRad(rotation[1]),
+          THREE.MathUtils.degToRad(rotation[2]),
+        ],
+        scale // Pass user scale to RTC group for mercator coordinate scaling
       );
 
       // Load the GLTF model
       const gltf = await this._gltfLoader.loadAsync(url);
       const modelScene = gltf.scene;
 
-      // Apply rotation directly to model (like MapLibre example)
-      // Rotate 90 degrees on X axis to align with map coordinate system
-      modelScene.rotation.x = THREE.MathUtils.degToRad(rotation[0]);
-      modelScene.rotation.y = THREE.MathUtils.degToRad(rotation[1]);
-      modelScene.rotation.z = THREE.MathUtils.degToRad(rotation[2]);
-
       // Apply scale with Y-axis flip for proper GLTF orientation
+      // MapLibre uses a different coordinate system than GLTF
+      // Scale is applied to both RTC group and model (like splats)
       modelScene.scale.set(scale, -scale, scale);
 
       // Add model to RTC group and scene (lighting is handled by the global scene)
