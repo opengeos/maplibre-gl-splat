@@ -319,42 +319,19 @@ export class GaussianSplatControl implements IControl {
         scale
       );
 
-      // Create and load the splat mesh
+      // Create the splat mesh - it handles loading internally
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const splatMesh = new (SplatMesh as any)({ url });
 
-      // Wait for the mesh to load (with timeout)
-      await new Promise<void>((resolve, reject) => {
-        let resolved = false;
-        const checkLoaded = () => {
-          if (resolved) return;
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const mesh = splatMesh as any;
-          if (mesh.geometry && mesh.geometry.attributes?.position) {
-            resolved = true;
-            resolve();
-          } else {
-            setTimeout(checkLoaded, 100);
-          }
-        };
-        checkLoaded();
-        // Timeout after 60 seconds
-        setTimeout(() => {
-          if (!resolved) {
-            resolved = true;
-            reject(new Error('Splat loading timeout (60s)'));
-          }
-        }, 60000);
-      });
-
-      // Apply scale if not set in RTC group
+      // Apply scale
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       if ((splatMesh as any).scale?.setScalar) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (splatMesh as any).scale.setScalar(scale);
       }
 
-      // Add to RTC group and scene
+      // Add to RTC group and scene immediately
+      // SplatMesh loads asynchronously and renders when ready
       rtcGroup.add(splatMesh);
       this._mapScene.addObject(rtcGroup);
 
