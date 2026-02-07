@@ -325,17 +325,9 @@ export class GaussianSplatControl implements IControl {
   ): Promise<string> {
     const extension = this._getFileExtension(url);
     if (extension === 'gltf' || extension === 'glb') {
-      // Use GLTF-specific rotation defaults
-      // If rotation matches splat defaults, use model defaults instead
+      // For GLTF, don't pass rotation - let loadModel use its defaults
       const modelOptions = { ...options };
-      const splatDefaults = this._options.defaultRotation;
-      const isSplatRotation = modelOptions.rotation &&
-        modelOptions.rotation[0] === splatDefaults[0] &&
-        modelOptions.rotation[1] === splatDefaults[1] &&
-        modelOptions.rotation[2] === splatDefaults[2];
-      if (!modelOptions.rotation || isSplatRotation) {
-        modelOptions.rotation = this._options.defaultModelRotation;
-      }
+      delete modelOptions.rotation;
       return this.loadModel(url, modelOptions);
     }
     return this.loadSplat(url, options);
