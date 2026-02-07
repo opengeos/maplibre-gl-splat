@@ -120,7 +120,7 @@ describe('GaussianSplatControl', () => {
 
   it('should return correct default position', async () => {
     const { GaussianSplatControl } = await import('../lib/core/GaussianSplatControl');
-    
+
     const control1 = new GaussianSplatControl();
     expect(control1.getDefaultPosition()).toBe('top-right');
 
