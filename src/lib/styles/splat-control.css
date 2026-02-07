@@ -1,0 +1,51 @@
+/**
+ * GaussianSplatControl styles
+ */
+
+.maplibre-gl-splat {
+  position: relative;
+}
+
+.maplibre-gl-splat-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 29px;
+  height: 29px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #333;
+  transition: color 0.15s ease;
+}
+
+.maplibre-gl-splat-button:hover {
+  color: #0078d7;
+}
+
+.maplibre-gl-splat-button.active {
+  color: #0078d7;
+}
+
+.maplibre-gl-splat-panel {
+  padding: 12px;
+  min-width: 280px;
+}
+
+.maplibre-gl-splat-panel input {
+  font-family: inherit;
+}
+
+.maplibre-gl-splat-panel input:focus {
+  outline: none;
+  border-color: #0078d7;
+}
+
+.maplibre-gl-splat-panel button:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.maplibre-gl-splat-panel button:disabled {
+  cursor: not-allowed;
+}
