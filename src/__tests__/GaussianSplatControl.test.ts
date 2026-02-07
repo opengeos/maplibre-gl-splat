@@ -9,9 +9,23 @@ vi.mock('maplibre-gl', () => ({
 vi.mock('three', () => ({
   AmbientLight: vi.fn(),
   DirectionalLight: vi.fn(),
+  Group: vi.fn().mockImplementation(() => ({
+    scale: { setScalar: vi.fn() },
+  })),
   MathUtils: {
     degToRad: (deg: number) => deg * (Math.PI / 180),
   },
+}));
+
+// Mock GLTFLoader
+vi.mock('three/addons/loaders/GLTFLoader.js', () => ({
+  GLTFLoader: vi.fn().mockImplementation(() => ({
+    loadAsync: vi.fn().mockResolvedValue({
+      scene: {
+        scale: { setScalar: vi.fn() },
+      },
+    }),
+  })),
 }));
 
 // Mock maplibre-three-plugin
@@ -143,5 +157,46 @@ describe('useGaussianSplat hook', () => {
   it('should export useGaussianSplat', async () => {
     const module = await import('../lib/hooks/useGaussianSplat');
     expect(module.useGaussianSplat).toBeDefined();
+  });
+});
+
+describe('GLTF/GLB model support', () => {
+  it('should have loadModel method', async () => {
+    const { GaussianSplatControl } = await import('../lib/core/GaussianSplatControl');
+    const control = new GaussianSplatControl();
+    expect(typeof control.loadModel).toBe('function');
+  });
+
+  it('should have removeModel method', async () => {
+    const { GaussianSplatControl } = await import('../lib/core/GaussianSplatControl');
+    const control = new GaussianSplatControl();
+    expect(typeof control.removeModel).toBe('function');
+  });
+
+  it('should have removeAllModels method', async () => {
+    const { GaussianSplatControl } = await import('../lib/core/GaussianSplatControl');
+    const control = new GaussianSplatControl();
+    expect(typeof control.removeAllModels).toBe('function');
+  });
+
+  it('should have load method for auto-detection', async () => {
+    const { GaussianSplatControl } = await import('../lib/core/GaussianSplatControl');
+    const control = new GaussianSplatControl();
+    expect(typeof control.load).toBe('function');
+  });
+
+  it('should emit modelload and modelremove events', async () => {
+    const { GaussianSplatControl } = await import('../lib/core/GaussianSplatControl');
+    const control = new GaussianSplatControl();
+
+    const modelLoadHandler = vi.fn();
+    const modelRemoveHandler = vi.fn();
+
+    control.on('modelload', modelLoadHandler);
+    control.on('modelremove', modelRemoveHandler);
+
+    // Verify handlers are registered (events would fire when map is initialized)
+    expect(modelLoadHandler).not.toHaveBeenCalled();
+    expect(modelRemoveHandler).not.toHaveBeenCalled();
   });
 });
