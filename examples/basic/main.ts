@@ -22,7 +22,13 @@ const splatControl = new GaussianSplatControl({
   collapsed: false,
   title: 'Gaussian Splats',
   // Example splat URL - users can enter their own
-  defaultUrl: 'https://sparkjs.dev/assets/splats/butterfly.spz',
+  // defaultUrl: 'https://sparkjs.dev/assets/splats/butterfly.spz',
+  defaultUrl: 'https://maplibre.org/maplibre-gl-js/docs/assets/34M_17/34M_17.gltf',
+  defaultLongitude: 148.9819,
+  defaultLatitude: -35.39847,
+  defaultAltitude: 0,
+  defaultScale: 0.03,
+  defaultRotation: [-90, 90, 0],
 });
 
 map.addControl(splatControl, 'top-right');

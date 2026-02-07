@@ -11,6 +11,10 @@ export interface GaussianSplatControlReactProps extends GaussianSplatControlOpti
   onSplatLoad?: (url: string, splatId: string) => void;
   /** Callback when a splat is removed. */
   onSplatRemove?: (splatId: string) => void;
+  /** Callback when a GLTF/GLB model is loaded. */
+  onModelLoad?: (url: string, modelId: string) => void;
+  /** Callback when a GLTF/GLB model is removed. */
+  onModelRemove?: (modelId: string) => void;
   /** Callback when an error occurs. */
   onError?: (error: string) => void;
   /** Callback when the control is expanded. */
@@ -38,6 +42,8 @@ export function GaussianSplatControlReact({
   position = 'top-right',
   onSplatLoad,
   onSplatRemove,
+  onModelLoad,
+  onModelRemove,
   onError,
   onExpand,
   onCollapse,
@@ -68,6 +74,22 @@ export function GaussianSplatControlReact({
       };
       control.on('splatremove', handler);
       handlers.push(['splatremove', handler]);
+    }
+
+    if (onModelLoad) {
+      const handler: GaussianSplatEventHandler = (e) => {
+        if (e.url && e.modelId) onModelLoad(e.url, e.modelId);
+      };
+      control.on('modelload', handler);
+      handlers.push(['modelload', handler]);
+    }
+
+    if (onModelRemove) {
+      const handler: GaussianSplatEventHandler = (e) => {
+        if (e.modelId) onModelRemove(e.modelId);
+      };
+      control.on('modelremove', handler);
+      handlers.push(['modelremove', handler]);
     }
 
     if (onError) {
