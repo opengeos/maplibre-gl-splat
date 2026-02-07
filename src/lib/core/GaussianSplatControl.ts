@@ -214,7 +214,10 @@ export class GaussianSplatControl implements IControl {
     // Auto-load default URL if specified
     if (this._options.loadDefaultUrl && this._options.defaultUrl) {
       map.once('idle', () => {
-        this.load(this._options.defaultUrl);
+        // Check if control is still attached (handles React StrictMode cleanup)
+        if (this._map && this._mapScene) {
+          this.load(this._options.defaultUrl);
+        }
       });
     }
 
