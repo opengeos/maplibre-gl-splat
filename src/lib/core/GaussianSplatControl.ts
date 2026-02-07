@@ -498,9 +498,10 @@ export class GaussianSplatControl implements IControl {
       const gltf = await this._gltfLoader.loadAsync(url);
       const modelScene = gltf.scene;
 
-      // Apply Y-axis flip for proper GLTF orientation (keeping user scale)
+      // Apply scale with Y-axis flip for proper GLTF orientation
       // MapLibre uses a different coordinate system than GLTF
-      modelScene.scale.set(1, -1, 1);
+      // Scale is applied to both RTC group and model (like splats)
+      modelScene.scale.set(scale, -scale, scale);
 
       // Add model to RTC group and scene (lighting is handled by the global scene)
       rtcGroup.add(modelScene);
