@@ -482,7 +482,7 @@ export class GaussianSplatControl implements IControl {
 
       // Create RTC group for georeferenced positioning
       // GLTF models need rotation to align with map coordinate system
-      // Pass scale=1 to RTC group, we'll apply user scale to the model directly
+      // Create RTC group for georeferenced positioning
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const rtcGroup = (MTP.Creator as any).createMercatorRTCGroup(
         [lng, lat, alt],
@@ -491,16 +491,16 @@ export class GaussianSplatControl implements IControl {
           THREE.MathUtils.degToRad(rotation[1]),
           THREE.MathUtils.degToRad(rotation[2]),
         ],
-        1 // Base scale for mercator conversion
+        scale // Pass user scale to RTC group for mercator coordinate scaling
       );
 
       // Load the GLTF model
       const gltf = await this._gltfLoader.loadAsync(url);
       const modelScene = gltf.scene;
 
-      // Apply user scale with Y-axis flip for proper GLTF orientation
+      // Apply Y-axis flip for proper GLTF orientation (keeping user scale)
       // MapLibre uses a different coordinate system than GLTF
-      modelScene.scale.set(scale, -scale, scale);
+      modelScene.scale.set(1, -1, 1);
 
       // Add model to RTC group and scene (lighting is handled by the global scene)
       rtcGroup.add(modelScene);
@@ -860,8 +860,9 @@ export class GaussianSplatControl implements IControl {
       panel.appendChild(this._createStatus(this._state.status, 'success'));
     }
 
-    // Layer list
-    if (this._splatLayers.size > 0) {
+    // Layer list (splats and models)
+    const totalLayers = this._splatLayers.size + this._modelLayers.size;
+    if (totalLayers > 0) {
       const listDiv = document.createElement('div');
       listDiv.style.cssText = `
         margin-top: 16px;
@@ -870,44 +871,23 @@ export class GaussianSplatControl implements IControl {
       `;
 
       const listHeader = document.createElement('div');
-      listHeader.textContent = `Layers (${this._splatLayers.size})`;
+      listHeader.textContent = `Layers (${totalLayers})`;
       listHeader.style.cssText = 'font-size: 12px; font-weight: 500; color: #555; margin-bottom: 8px;';
       listDiv.appendChild(listHeader);
 
+      // Splat layers
       for (const [layerId, layer] of this._splatLayers) {
-        const item = document.createElement('div');
-        item.style.cssText = `
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 6px 8px;
-          background: #f8f8f8;
-          border-radius: 4px;
-          margin-bottom: 4px;
-          font-size: 11px;
-        `;
-
-        const label = document.createElement('span');
-        label.textContent = this._getFilename(layer.url);
-        label.style.cssText = 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
-        item.appendChild(label);
-
-        const removeBtn = document.createElement('button');
-        removeBtn.innerHTML = '×';
-        removeBtn.title = 'Remove';
-        removeBtn.style.cssText = `
-          border: none;
-          background: transparent;
-          cursor: pointer;
-          color: #999;
-          font-size: 14px;
-          padding: 0 4px;
-        `;
-        removeBtn.addEventListener('click', () => {
+        const item = this._createLayerItem(this._getFilename(layer.url), 'splat', () => {
           this.removeSplat(layerId);
         });
-        item.appendChild(removeBtn);
+        listDiv.appendChild(item);
+      }
 
+      // Model layers
+      for (const [layerId, layer] of this._modelLayers) {
+        const item = this._createLayerItem(this._getFilename(layer.url), 'model', () => {
+          this.removeModel(layerId);
+        });
         listDiv.appendChild(item);
       }
 
@@ -998,6 +978,42 @@ export class GaussianSplatControl implements IControl {
       color: ${colors[type].color};
     `;
     return status;
+  }
+
+  private _createLayerItem(name: string, type: 'splat' | 'model', onRemove: () => void): HTMLElement {
+    const item = document.createElement('div');
+    item.style.cssText = `
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 8px;
+      background: #f8f8f8;
+      border-radius: 4px;
+      margin-bottom: 4px;
+      font-size: 11px;
+    `;
+
+    const label = document.createElement('span');
+    const typeIcon = type === 'model' ? '📦 ' : '✨ ';
+    label.textContent = typeIcon + name;
+    label.style.cssText = 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+    item.appendChild(label);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.innerHTML = '×';
+    removeBtn.title = 'Remove';
+    removeBtn.style.cssText = `
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      color: #999;
+      font-size: 14px;
+      padding: 0 4px;
+    `;
+    removeBtn.addEventListener('click', onRemove);
+    item.appendChild(removeBtn);
+
+    return item;
   }
 
   private _getFilename(url: string): string {
