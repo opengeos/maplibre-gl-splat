@@ -482,6 +482,7 @@ export class GaussianSplatControl implements IControl {
 
       // Create RTC group for georeferenced positioning
       // GLTF models need rotation to align with map coordinate system
+      // Pass scale=1 to RTC group, we'll apply user scale to the model directly
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const rtcGroup = (MTP.Creator as any).createMercatorRTCGroup(
         [lng, lat, alt],
@@ -490,14 +491,14 @@ export class GaussianSplatControl implements IControl {
           THREE.MathUtils.degToRad(rotation[1]),
           THREE.MathUtils.degToRad(rotation[2]),
         ],
-        scale
+        1 // Base scale for mercator conversion
       );
 
       // Load the GLTF model
       const gltf = await this._gltfLoader.loadAsync(url);
       const modelScene = gltf.scene;
 
-      // Apply scale with Y-axis flip for proper GLTF orientation
+      // Apply user scale with Y-axis flip for proper GLTF orientation
       // MapLibre uses a different coordinate system than GLTF
       modelScene.scale.set(scale, -scale, scale);
 
