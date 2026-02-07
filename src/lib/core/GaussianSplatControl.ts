@@ -208,7 +208,7 @@ export class GaussianSplatControl implements IControl {
     // Auto-load default URL if specified
     if (this._options.loadDefaultUrl && this._options.defaultUrl) {
       map.once('idle', () => {
-        this.loadSplat(this._options.defaultUrl);
+        this.load(this._options.defaultUrl);
       });
     }
 
@@ -290,6 +290,36 @@ export class GaussianSplatControl implements IControl {
    */
   off(event: GaussianSplatEvent, handler: GaussianSplatEventHandler): void {
     this._eventHandlers.get(event)?.delete(handler);
+  }
+
+  /**
+   * Load a 3D asset from a URL (auto-detects file type).
+   * Routes GLTF/GLB files to loadModel(), all others to loadSplat().
+   */
+  async load(
+    url: string,
+    options?: {
+      longitude?: number;
+      latitude?: number;
+      altitude?: number;
+      rotation?: [number, number, number];
+      scale?: number;
+    }
+  ): Promise<string> {
+    const extension = this._getFileExtension(url);
+    if (extension === 'gltf' || extension === 'glb') {
+      return this.loadModel(url, options);
+    }
+    return this.loadSplat(url, options);
+  }
+
+  /**
+   * Get the file extension from a URL.
+   */
+  private _getFileExtension(url: string): string {
+    const pathname = new URL(url, 'http://dummy').pathname;
+    const ext = pathname.split('.').pop()?.toLowerCase() || '';
+    return ext;
   }
 
   /**
@@ -787,7 +817,7 @@ export class GaussianSplatControl implements IControl {
     `;
     loadBtn.addEventListener('click', () => {
       if (this._state.url) {
-        this.loadSplat(this._state.url);
+        this.load(this._state.url);
       }
     });
     panel.appendChild(loadBtn);
