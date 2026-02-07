@@ -183,6 +183,7 @@ export class GaussianSplatControl implements IControl {
   private _layerCounter = 0;
   private _modelCounter = 0;
   private _gltfLoader?: GLTFLoader;
+  private _idleHandler?: () => void;
 
   constructor(options?: GaussianSplatControlOptions) {
     this._options = { ...DEFAULT_OPTIONS, ...options };
@@ -213,18 +214,25 @@ export class GaussianSplatControl implements IControl {
 
     // Auto-load default URL if specified
     if (this._options.loadDefaultUrl && this._options.defaultUrl) {
-      map.once('idle', () => {
+      this._idleHandler = () => {
         // Check if control is still attached (handles React StrictMode cleanup)
         if (this._map && this._mapScene) {
           this.load(this._options.defaultUrl);
         }
-      });
+      };
+      map.once('idle', this._idleHandler);
     }
 
     return this._container;
   }
 
   onRemove(): void {
+    // Remove idle handler if pending
+    if (this._idleHandler && this._map) {
+      this._map.off('idle', this._idleHandler);
+      this._idleHandler = undefined;
+    }
+
     this._removeAllLayers();
 
     this._mapScene = undefined;
