@@ -22,6 +22,8 @@ export interface GaussianSplatControlOptions {
   title?: string;
   /** Panel width in pixels. Default: 320. */
   panelWidth?: number;
+  /** Maximum height of the panel in pixels. Default: 500. */
+  maxHeight?: number;
   /** Default URL to load. */
   defaultUrl?: string;
   /** Auto-load the default URL when control is added. Default: false. */
@@ -129,6 +131,7 @@ const DEFAULT_OPTIONS: Required<GaussianSplatControlOptions> = {
   collapsed: true,
   title: 'Gaussian Splats',
   panelWidth: 320,
+  maxHeight: 500,
   defaultUrl: '',
   loadDefaultUrl: false,
   defaultOpacity: 1,
@@ -715,6 +718,8 @@ export class GaussianSplatControl implements IControl {
     panel.style.cssText = `
       padding: 12px;
       width: ${this._options.panelWidth}px;
+      max-height: ${this._options.maxHeight}px;
+      overflow-y: auto;
       font-size: 13px;
       color: #333;
     `;
