@@ -1,6 +1,6 @@
 {
   "name": "maplibre-gl-splat",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A MapLibre GL JS plugin for visualizing 3D Gaussian Splats",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -39,7 +39,7 @@
   ],
   "scripts": {
     "dev": "vite",
-    "build": "tsc -p tsconfig.build.json && vite build",
+    "build": "vite build && tsc -p tsconfig.build.json",
     "build:examples": "vite build --config vite.examples.config.ts",
     "preview": "vite preview",
     "test": "vitest --run",
