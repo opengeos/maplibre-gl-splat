@@ -669,9 +669,7 @@ export class GaussianSplatControl implements IControl {
 
   private _createContainer(): HTMLElement {
     const container = document.createElement('div');
-    container.className = `maplibregl-ctrl maplibre-gl-splat ${this._options.className || ''}`;
-    container.style.background = 'rgba(255, 255, 255, 0.95)';
-    container.style.borderRadius = '4px';
+    container.className = `maplibregl-ctrl maplibregl-ctrl-group maplibre-gl-splat ${this._options.className || ''}`;
     return container;
   }
 
