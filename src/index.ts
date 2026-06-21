@@ -10,6 +10,7 @@ export { GaussianSplatLayerAdapter } from './lib/adapters/GaussianSplatLayerAdap
 // Type exports
 export type {
   GaussianSplatControlOptions,
+  GaussianSplatSampleDataset,
   GaussianSplatControlState,
   GaussianSplatEvent,
   GaussianSplatEventHandler,

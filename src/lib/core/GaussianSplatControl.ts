@@ -11,9 +11,24 @@ import { SplatMesh } from '@sparkjsdev/spark';
 /**
  * Options for configuring the GaussianSplatControl.
  */
+/**
+ * A named sample asset offered as a one-click entry in the panel's
+ * "Load sample data" dropdown. Picking it fills the URL input.
+ */
+export interface GaussianSplatSampleDataset {
+  /** Label shown in the dropdown. */
+  label: string;
+  /** Asset URL filled into the input when this entry is picked. */
+  url: string;
+}
+
 export interface GaussianSplatControlOptions {
   /** Position on the map. Default: 'top-right'. */
   position?: ControlPosition;
+  /** Sample assets shown as a "Load sample data" dropdown above the URL input (hidden when empty). */
+  sampleData?: GaussianSplatSampleDataset[];
+  /** Placeholder shown in the sample-data dropdown. Default: 'Load sample data...'. */
+  sampleDataLabel?: string;
   /** Custom CSS class name. */
   className?: string;
   /** Whether the control starts collapsed. Default: true. */
@@ -133,6 +148,8 @@ const DEFAULT_OPTIONS: Required<GaussianSplatControlOptions> = {
   panelWidth: 320,
   maxHeight: 500,
   defaultUrl: '',
+  sampleData: [],
+  sampleDataLabel: 'Load sample data...',
   loadDefaultUrl: false,
   defaultOpacity: 1,
   defaultRotation: [-90, 90, 0],
@@ -772,6 +789,11 @@ export class GaussianSplatControl implements IControl {
       this._state.url = urlInput.value;
     });
     urlGroup.appendChild(urlInput);
+    const sampleDropdown = this._createSampleDropdown((url) => {
+      urlInput.value = url;
+      this._state.url = url;
+    });
+    if (sampleDropdown) panel.appendChild(sampleDropdown);
     panel.appendChild(urlGroup);
 
     // Location inputs
@@ -921,6 +943,87 @@ export class GaussianSplatControl implements IControl {
     labelEl.textContent = label;
     labelEl.style.cssText = 'display: block; font-size: 12px; font-weight: 500; color: #555; margin-bottom: 4px;';
     group.appendChild(labelEl);
+
+    return group;
+  }
+
+  /**
+   * Builds the "Load sample data" dropdown: a custom (not native `<select>`)
+   * dropdown so the menu themes correctly in dark mode. Picking an entry calls
+   * `onSelect` with its URL. Returns null when no samples are configured.
+   */
+  private _createSampleDropdown(onSelect: (url: string) => void): HTMLElement | null {
+    const samples = this._options.sampleData;
+    if (samples.length === 0) return null;
+    const placeholder = this._options.sampleDataLabel;
+
+    const triggerLabel = document.createElement('span');
+    triggerLabel.className = 'splat-sample-trigger-label';
+    triggerLabel.textContent = placeholder;
+    const caret = document.createElement('span');
+    caret.className = 'splat-sample-caret';
+    caret.textContent = '▾';
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'splat-sample-trigger';
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.setAttribute('aria-label', placeholder);
+    trigger.appendChild(triggerLabel);
+    trigger.appendChild(caret);
+
+    const menu = document.createElement('div');
+    menu.className = 'splat-sample-menu';
+    menu.setAttribute('role', 'listbox');
+    menu.hidden = true;
+
+    let menuOpen = false;
+    const setMenuOpen = (open: boolean): void => {
+      menuOpen = open;
+      menu.hidden = !open;
+      trigger.setAttribute('aria-expanded', String(open));
+      trigger.classList.toggle('open', open);
+      if (open) (menu.firstElementChild as HTMLElement | null)?.focus();
+    };
+
+    for (const sample of samples) {
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'splat-sample-option';
+      option.setAttribute('role', 'option');
+      option.textContent = sample.label;
+      option.title = sample.url;
+      option.addEventListener('click', (event) => {
+        event.stopPropagation();
+        setMenuOpen(false);
+        trigger.focus();
+        onSelect(sample.url);
+      });
+      menu.appendChild(option);
+    }
+
+    trigger.addEventListener('click', (event) => {
+      event.stopPropagation();
+      setMenuOpen(!menuOpen);
+    });
+
+    const group = this._createFormGroup('Sample data');
+    const dropdown = document.createElement('div');
+    dropdown.className = 'splat-sample-dropdown';
+    dropdown.appendChild(trigger);
+    dropdown.appendChild(menu);
+    group.appendChild(dropdown);
+
+    group.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && menuOpen) {
+        setMenuOpen(false);
+        trigger.focus();
+      }
+    });
+    group.addEventListener('focusout', (e) => {
+      const next = (e as FocusEvent).relatedTarget as Node | null;
+      if (!next || !group.contains(next)) setMenuOpen(false);
+    });
 
     return group;
   }
