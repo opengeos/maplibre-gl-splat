@@ -1285,15 +1285,46 @@ export class GaussianSplatControl implements IControl {
     if (samples.length === 0) return null;
     const placeholder = this._options.sampleDataLabel;
 
+    // Like the rest of this control, the dropdown is styled inline so it lays
+    // out correctly even when the bundled stylesheet is not loaded by the host
+    // app. Colors are intentionally left to the stylesheet / host overrides;
+    // only the layout that the label relies on (full-width trigger, single-line
+    // ellipsis) is set here so the label cannot wrap and overlap the next field.
     const triggerLabel = document.createElement('span');
     triggerLabel.className = 'splat-sample-trigger-label';
     triggerLabel.textContent = placeholder;
+    triggerLabel.style.cssText = `
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    `;
     const caret = document.createElement('span');
     caret.className = 'splat-sample-caret';
     caret.textContent = '▾';
+    caret.style.cssText = 'flex: 0 0 auto; font-size: 10px;';
     const trigger = document.createElement('button');
     trigger.type = 'button';
     trigger.className = 'splat-sample-trigger';
+    trigger.style.cssText = `
+      box-sizing: border-box;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px;
+      font: inherit;
+      font-weight: 400;
+      text-align: left;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      background: #fff;
+      color: #6b7280;
+      cursor: pointer;
+      outline: none;
+    `;
     trigger.setAttribute('aria-haspopup', 'listbox');
     trigger.setAttribute('aria-expanded', 'false');
     trigger.setAttribute('aria-label', placeholder);
@@ -1304,6 +1335,23 @@ export class GaussianSplatControl implements IControl {
     menu.className = 'splat-sample-menu';
     menu.setAttribute('role', 'listbox');
     menu.hidden = true;
+    // No `display` here: the `hidden` attribute toggles visibility, and an
+    // inline `display` would override it and keep the menu shown.
+    menu.style.cssText = `
+      position: absolute;
+      top: calc(100% + 2px);
+      left: 0;
+      right: 0;
+      z-index: 10;
+      box-sizing: border-box;
+      padding: 4px;
+      background: #fff;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+      max-height: 220px;
+      overflow-y: auto;
+    `;
 
     let menuOpen = false;
     const setMenuOpen = (open: boolean): void => {
@@ -1320,6 +1368,21 @@ export class GaussianSplatControl implements IControl {
       option.className = 'splat-sample-option';
       option.setAttribute('role', 'option');
       option.textContent = sample.label;
+      option.style.cssText = `
+        display: block;
+        box-sizing: border-box;
+        width: 100%;
+        margin: 0;
+        padding: 6px 8px;
+        font: inherit;
+        font-weight: 400;
+        text-align: left;
+        border: none;
+        border-radius: 3px;
+        background: none;
+        color: #111827;
+        cursor: pointer;
+      `;
       option.title = sample.url;
       option.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -1338,6 +1401,7 @@ export class GaussianSplatControl implements IControl {
     const group = this._createFormGroup('Sample data');
     const dropdown = document.createElement('div');
     dropdown.className = 'splat-sample-dropdown';
+    dropdown.style.cssText = 'position: relative;';
     dropdown.appendChild(trigger);
     dropdown.appendChild(menu);
     group.appendChild(dropdown);
