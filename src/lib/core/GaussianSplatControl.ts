@@ -828,7 +828,10 @@ export class GaussianSplatControl implements IControl {
     // column so the overflow actually engages.
     const content = document.createElement('div');
     content.className = 'maplibre-gl-splat-content';
-    content.style.cssText = 'flex: 1 1 auto; overflow-y: auto; min-height: 0;';
+    // scrollbar-gutter reserves space for the scrollbar so it does not overlay
+    // the right edge of the form fields when the content scrolls.
+    content.style.cssText =
+      'flex: 1 1 auto; overflow-y: auto; min-height: 0; scrollbar-gutter: stable;';
 
     // URL input
     const urlGroup = this._createFormGroup('3D Asset URL (.splat, .ply, .spz, .gltf, .glb)');
@@ -1060,7 +1063,11 @@ export class GaussianSplatControl implements IControl {
       160,
       mapRect.height - anchorOffset - PANEL_EDGE_MARGIN
     );
-    this._panel.style.maxHeight = `min(80vh, 720px, ${available}px)`;
+    // Cap at the room actually available (and a hard 720px ceiling), not 80vh:
+    // an 80vh cap is smaller than the available room on common window sizes, so
+    // a form that would otherwise fit was forced to scroll. The panel still
+    // sizes to its content and only scrolls when the content exceeds this cap.
+    this._panel.style.maxHeight = `min(720px, ${available}px)`;
 
     this._applyUserPanelSize();
   }
