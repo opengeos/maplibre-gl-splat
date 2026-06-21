@@ -1147,7 +1147,7 @@ export class GaussianSplatControl implements IControl {
         );
       `;
       handle.addEventListener('pointerdown', (event) =>
-        this._beginResize(event, side, panel, handle)
+        this._beginResize(event, panel, handle)
       );
       panel.appendChild(handle);
     }
@@ -1156,27 +1156,34 @@ export class GaussianSplatControl implements IControl {
   /**
    * Start a pointer-driven resize from one of the bottom-corner grips.
    *
-   * The splat panel renders in normal document flow inside the corner-anchored
-   * MapLibre control container, so it has no absolute position in the map
-   * container. To run the same corner-anchored math as maplibre-gl-vector, the
-   * panel is temporarily given `position: fixed` and pinned to its current
-   * viewport rect (from getBoundingClientRect) for the duration of the drag.
-   * The right grip then grows the width rightward (left edge fixed); the left
-   * grip grows the width leftward while holding the right edge fixed; both grow
-   * the height downward. Sizes are clamped to a minimum and to the map
-   * container rect (less an edge margin). On pointerup / cancel the temporary
-   * `position: fixed` (and left/top) is removed so the panel returns to its
-   * normal docked flow position, while the chosen width / height is kept on
-   * `_userPanelSize` and re-applied by `_applyUserPanelSize`.
+   * The splat panel is a flowed child of the corner-anchored MapLibre control
+   * container, which already holds it pinned at its docked corner. So the drag
+   * only changes the panel's `width` / `height`; it never touches
+   * `position` / `left` / `top` / `right` / `bottom`. (An earlier version used
+   * `position: fixed`, but MapLibre's map and control containers carry a CSS
+   * `transform`, which makes `fixed` resolve relative to that transformed
+   * ancestor instead of the viewport, so the pinned coordinates were wrong and
+   * the panel jumped.)
+   *
+   * On pointerdown the panel's docked edges are captured from its bounding rect
+   * and held fixed for the whole drag. The docked corner is read from
+   * `_getControlPosition()`: `right` panels keep their right edge fixed and grow
+   * leftward into the map, `bottom` panels keep their bottom edge fixed and grow
+   * upward. On each move the interior corner follows the pointer:
+   * `width  = right  ? dockRight  - pointerX : pointerX - dockLeft`,
+   * `height = bottom ? dockBottom - pointerY : pointerY - dockTop`, clamped to a
+   * minimum and to the room to the opposite map edge (less an edge margin). Both
+   * bottom grips run this same dock-based math. The chosen width / height is
+   * kept on `_userPanelSize` and re-applied (clamped) by `_applyUserPanelSize`.
+   *
+   * Both bottom grips run this same dock-based math, so it takes no `side`.
    *
    * @param event - The pointerdown event.
-   * @param side - Which bottom-corner grip started the drag.
    * @param panel - The panel element being resized.
    * @param handle - The grip element (for pointer capture).
    */
   private _beginResize(
     event: PointerEvent,
-    side: 'left' | 'right',
     panel: HTMLElement,
     handle: HTMLElement
   ): void {
@@ -1188,15 +1195,16 @@ export class GaussianSplatControl implements IControl {
 
     const mapRect = mapContainer.getBoundingClientRect();
     const rect = panel.getBoundingClientRect();
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const startWidth = rect.width;
-    const startHeight = rect.height;
-    // Viewport coordinates, so the corner-anchored math works regardless of the
-    // flow parent once the panel is pinned with position: fixed below.
-    const startLeft = rect.left;
-    const startRight = rect.right;
-    const startTop = rect.top;
+    // The panel's docked edges, fixed for the whole drag. The control container
+    // keeps the docked corner pinned, so we only ever change width / height.
+    const dockLeft = rect.left;
+    const dockRight = rect.right;
+    const dockTop = rect.top;
+    const dockBottom = rect.bottom;
+
+    const position = this._getControlPosition();
+    const right = position.endsWith('right');
+    const bottom = position.startsWith('bottom');
 
     // Clamp the preferred minimums to what the map can actually hold.
     const minWidth = Math.min(
@@ -1208,66 +1216,67 @@ export class GaussianSplatControl implements IControl {
       Math.max(120, mapRect.height - 2 * PANEL_EDGE_MARGIN)
     );
 
-    // Pin the panel to its current viewport rect so the size grows from the
-    // dragged corner regardless of the docked anchor, dropping the flow layout
-    // and the dynamic max caps for the duration of the drag.
-    const prevPosition = panel.style.position;
-    panel.style.position = 'fixed';
-    panel.style.left = `${startLeft}px`;
-    panel.style.top = `${startTop}px`;
-    panel.style.right = '';
-    panel.style.bottom = '';
+    // Room from the docked edge to the opposite map edge, less an edge margin.
+    const maxWidth = Math.max(
+      minWidth,
+      (right ? dockRight - mapRect.left : mapRect.right - dockLeft) -
+        PANEL_EDGE_MARGIN
+    );
+    const maxHeight = Math.max(
+      minHeight,
+      (bottom ? dockBottom - mapRect.top : mapRect.bottom - dockTop) -
+        PANEL_EDGE_MARGIN
+    );
+
+    // Only width / height change during the drag. The flow layout and the
+    // dynamic max caps are dropped so the panel can size freely.
+    panel.style.boxSizing = 'border-box';
     panel.style.maxWidth = 'none';
     panel.style.maxHeight = 'none';
-    panel.style.width = `${startWidth}px`;
-    panel.style.height = `${startHeight}px`;
 
     const onMove = (moveEvent: PointerEvent): void => {
-      const dx = moveEvent.clientX - startX;
-      const dy = moveEvent.clientY - startY;
+      // The interior corner follows the pointer while the docked edges stay put.
+      const rawWidth = right
+        ? dockRight - moveEvent.clientX
+        : moveEvent.clientX - dockLeft;
+      const rawHeight = bottom
+        ? dockBottom - moveEvent.clientY
+        : moveEvent.clientY - dockTop;
 
-      const maxHeight = Math.max(minHeight, mapRect.bottom - startTop - PANEL_EDGE_MARGIN);
-      const nextHeight = Math.max(minHeight, Math.min(startHeight + dy, maxHeight));
-
-      let nextWidth: number;
-      let nextLeft = startLeft;
-      if (side === 'right') {
-        const maxWidth = Math.max(minWidth, mapRect.right - startLeft - PANEL_EDGE_MARGIN);
-        nextWidth = Math.max(minWidth, Math.min(startWidth + dx, maxWidth));
-      } else {
-        const maxWidth = Math.max(minWidth, startRight - mapRect.left - PANEL_EDGE_MARGIN);
-        nextWidth = Math.max(minWidth, Math.min(startWidth - dx, maxWidth));
-        // Hold the right edge fixed while the left edge follows the drag.
-        nextLeft = startLeft + (startWidth - nextWidth);
-      }
+      const nextWidth = Math.max(minWidth, Math.min(rawWidth, maxWidth));
+      const nextHeight = Math.max(minHeight, Math.min(rawHeight, maxHeight));
 
       panel.style.width = `${nextWidth}px`;
       panel.style.height = `${nextHeight}px`;
-      panel.style.left = `${nextLeft}px`;
       this._userPanelSize = { width: nextWidth, height: nextHeight };
     };
 
     const cleanup = (): void => {
-      handle.releasePointerCapture?.(event.pointerId);
+      try {
+        handle.releasePointerCapture?.(event.pointerId);
+      } catch {
+        // No active capture to release (e.g. synthetic events); ignore.
+      }
       handle.removeEventListener('pointermove', onMove);
       handle.removeEventListener('pointerup', cleanup);
       handle.removeEventListener('pointercancel', cleanup);
-      // Return the panel to its normal docked flow position, keeping only the
-      // chosen width / height (re-applied and clamped by _applyUserPanelSize).
-      panel.style.position = prevPosition;
-      panel.style.left = '';
-      panel.style.top = '';
-      panel.style.right = '';
-      panel.style.bottom = '';
-      panel.style.maxWidth = '';
+      // Re-apply the chosen width / height, clamped to the room available.
       this._updatePanelSize();
     };
 
-    handle.setPointerCapture?.(event.pointerId);
+    // Attach the move / end listeners first so a failed pointer capture (which
+    // can throw for a pointer the platform does not consider active) never stops
+    // the drag from being wired up.
     handle.addEventListener('pointermove', onMove);
     handle.addEventListener('pointerup', cleanup);
     // Touch / pen drags can end with pointercancel instead of pointerup.
     handle.addEventListener('pointercancel', cleanup);
+    try {
+      handle.setPointerCapture?.(event.pointerId);
+    } catch {
+      // Capture is a nicety (keeps events flowing if the pointer leaves the
+      // grip); the listeners above still drive the resize without it.
+    }
   }
 
   private _createFormGroup(label: string): HTMLElement {
