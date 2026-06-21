@@ -108,7 +108,7 @@ describe('GaussianSplatControl', () => {
     expect(control.getState().url).toBe('https://example.com/bonsai.splat');
   });
 
-  it('creates a custom resize handle on the expanded panel', async () => {
+  it('creates two bottom-corner resize handles on the expanded panel', async () => {
     const { GaussianSplatControl } = await import('../lib/core/GaussianSplatControl');
     const control = new GaussianSplatControl({ collapsed: false });
     const mapStub = {
@@ -119,8 +119,10 @@ describe('GaussianSplatControl', () => {
     };
     const container = control.onAdd(mapStub as never);
 
-    const handle = container.querySelector('.maplibre-gl-splat-resize');
-    expect(handle).not.toBeNull();
+    const handles = container.querySelectorAll('.maplibre-gl-splat-resize-handle');
+    expect(handles.length).toBe(2);
+    expect(container.querySelector('.maplibre-gl-splat-resize-left')).not.toBeNull();
+    expect(container.querySelector('.maplibre-gl-splat-resize-right')).not.toBeNull();
   });
 
   it('renders no sample dropdown by default', async () => {

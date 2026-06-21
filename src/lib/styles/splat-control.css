@@ -34,30 +34,58 @@
   min-width: 280px;
 }
 
-/* Engine-independent resize affordance (CSS `resize` is unreliable in
-   WebKitGTK). Placed at the panel's inward corner by _addResizeHandle(). */
-.maplibre-gl-splat-resize {
+/* Engine-independent resize grips (CSS `resize` is unreliable in WebKitGTK).
+   Two grips, one in each bottom corner, added by _addResizeHandles(): the
+   bottom-right grows the panel rightward, the bottom-left leftward, both
+   downward. Matches the UX in maplibre-gl-vector. */
+.maplibre-gl-splat-resize-handle {
   position: absolute;
+  bottom: 0;
   width: 16px;
   height: 16px;
   z-index: 5;
-  color: #888;
-  opacity: 0.55;
   touch-action: none;
-  background-image: repeating-linear-gradient(
-    135deg,
-    currentcolor 0 1px,
-    transparent 1px 3px
-  );
 }
 
-.maplibre-gl-splat-resize:hover {
-  opacity: 0.9;
+.maplibre-gl-splat-resize-handle::after {
+  content: '';
+  position: absolute;
+  bottom: 3px;
+  width: 7px;
+  height: 7px;
+  border-color: #888;
+  border-style: solid;
+  opacity: 0.7;
+}
+
+.maplibre-gl-splat-resize-handle:hover::after {
+  border-color: #0078d7;
+  opacity: 1;
+}
+
+.maplibre-gl-splat-resize-right {
+  right: 0;
+  cursor: nwse-resize;
+}
+
+.maplibre-gl-splat-resize-right::after {
+  right: 3px;
+  border-width: 0 2px 2px 0;
+}
+
+.maplibre-gl-splat-resize-left {
+  left: 0;
+  cursor: nesw-resize;
+}
+
+.maplibre-gl-splat-resize-left::after {
+  left: 3px;
+  border-width: 0 0 2px 2px;
 }
 
 @media (prefers-color-scheme: dark) {
-  .maplibre-gl-splat-resize {
-    color: #9aa3ab;
+  .maplibre-gl-splat-resize-handle::after {
+    border-color: #9aa3ab;
   }
 }
 

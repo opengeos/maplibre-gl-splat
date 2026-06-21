@@ -217,7 +217,6 @@ export class GaussianSplatControl implements IControl {
   // Panel sizing: user-chosen size from the resize handle (px), re-applied on
   // every render / reposition so it survives re-render and window resize.
   private _userPanelSize: { width: number; height: number } | null = null;
-  private _placeResizeHandle?: () => void;
   private _resizeHandler?: () => void;
   private _mapResizeHandler?: () => void;
 
@@ -991,7 +990,7 @@ export class GaussianSplatControl implements IControl {
     }
 
     panel.appendChild(content);
-    this._addResizeHandle(panel);
+    this._addResizeHandles(panel);
 
     this._container.appendChild(panel);
     this._panel = panel;
@@ -1062,7 +1061,6 @@ export class GaussianSplatControl implements IControl {
     );
     this._panel.style.maxHeight = `min(80vh, 720px, ${available}px)`;
 
-    this._placeResizeHandle?.();
     this._applyUserPanelSize();
   }
 
@@ -1104,92 +1102,143 @@ export class GaussianSplatControl implements IControl {
   }
 
   /**
-   * Add a custom pointer-driven resize handle at the panel's inward corner.
-   * Resizes both width and height between a minimum and the room available, with
-   * the anchored edges fixed. A custom handle is used instead of CSS `resize`,
-   * which is unreliable in WebKitGTK. Grows toward the map interior in any
-   * corner; the chosen size is persisted on the control and re-applied on
-   * re-render and window / map resize.
+   * Add two pointer-driven resize grips, one in each bottom corner of the
+   * panel, matching the UX shipped in maplibre-gl-vector. The bottom-right grip
+   * grows the panel rightward, the bottom-left grip grows it leftward, and both
+   * grow it downward. Custom grips are used instead of CSS `resize`, which is
+   * unreliable in WebKitGTK. The chosen size is persisted on the control and
+   * re-applied (clamped to the room available) on re-render and window / map
+   * resize.
    *
    * @param panel - The panel element to make resizable.
    */
-  private _addResizeHandle(panel: HTMLElement): void {
-    const handle = document.createElement('div');
-    handle.className = 'maplibre-gl-splat-resize';
-    handle.setAttribute('aria-hidden', 'true');
-    panel.appendChild(handle);
-
-    const placeHandle = (): void => {
-      const pos = this._getControlPosition();
-      const right = pos.endsWith('right');
-      const bottom = pos.startsWith('bottom');
-      handle.style.top = bottom ? '0' : 'auto';
-      handle.style.bottom = bottom ? 'auto' : '0';
-      handle.style.left = right ? '0' : 'auto';
-      handle.style.right = right ? 'auto' : '0';
-      handle.style.cursor = right === bottom ? 'nwse-resize' : 'nesw-resize';
-    };
-    placeHandle();
-    this._placeResizeHandle = placeHandle;
-
-    let right = false;
-    let bottom = false;
-    let startX = 0;
-    let startY = 0;
-    let startW = 0;
-    let startH = 0;
-    let maxW = Infinity;
-    let maxH = Infinity;
-
-    const onMove = (event: PointerEvent): void => {
-      const dx = event.clientX - startX;
-      const dy = event.clientY - startY;
-      const width = Math.min(
-        maxW,
-        Math.max(PANEL_MIN_WIDTH, right ? startW - dx : startW + dx)
+  private _addResizeHandles(panel: HTMLElement): void {
+    for (const side of ['left', 'right'] as const) {
+      const handle = document.createElement('div');
+      handle.className = `maplibre-gl-splat-resize-handle maplibre-gl-splat-resize-${side}`;
+      handle.setAttribute('aria-hidden', 'true');
+      handle.addEventListener('pointerdown', (event) =>
+        this._beginResize(event, side, panel, handle)
       );
-      const height = Math.min(
-        maxH,
-        Math.max(PANEL_MIN_HEIGHT, bottom ? startH - dy : startH + dy)
-      );
-      this._userPanelSize = { width, height };
-      this._applyUserPanelSize();
+      panel.appendChild(handle);
+    }
+  }
+
+  /**
+   * Start a pointer-driven resize from one of the bottom-corner grips.
+   *
+   * The splat panel renders in normal document flow inside the corner-anchored
+   * MapLibre control container, so it has no absolute position in the map
+   * container. To run the same corner-anchored math as maplibre-gl-vector, the
+   * panel is temporarily given `position: fixed` and pinned to its current
+   * viewport rect (from getBoundingClientRect) for the duration of the drag.
+   * The right grip then grows the width rightward (left edge fixed); the left
+   * grip grows the width leftward while holding the right edge fixed; both grow
+   * the height downward. Sizes are clamped to a minimum and to the map
+   * container rect (less an edge margin). On pointerup / cancel the temporary
+   * `position: fixed` (and left/top) is removed so the panel returns to its
+   * normal docked flow position, while the chosen width / height is kept on
+   * `_userPanelSize` and re-applied by `_applyUserPanelSize`.
+   *
+   * @param event - The pointerdown event.
+   * @param side - Which bottom-corner grip started the drag.
+   * @param panel - The panel element being resized.
+   * @param handle - The grip element (for pointer capture).
+   */
+  private _beginResize(
+    event: PointerEvent,
+    side: 'left' | 'right',
+    panel: HTMLElement,
+    handle: HTMLElement
+  ): void {
+    const mapContainer = this._getMapContainer();
+    if (!mapContainer) return;
+    event.preventDefault();
+    // Keep the drag from bubbling to any outside click / close handler.
+    event.stopPropagation();
+
+    const mapRect = mapContainer.getBoundingClientRect();
+    const rect = panel.getBoundingClientRect();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startWidth = rect.width;
+    const startHeight = rect.height;
+    // Viewport coordinates, so the corner-anchored math works regardless of the
+    // flow parent once the panel is pinned with position: fixed below.
+    const startLeft = rect.left;
+    const startRight = rect.right;
+    const startTop = rect.top;
+
+    // Clamp the preferred minimums to what the map can actually hold.
+    const minWidth = Math.min(
+      PANEL_MIN_WIDTH,
+      Math.max(120, mapRect.width - 2 * PANEL_EDGE_MARGIN)
+    );
+    const minHeight = Math.min(
+      PANEL_MIN_HEIGHT,
+      Math.max(120, mapRect.height - 2 * PANEL_EDGE_MARGIN)
+    );
+
+    // Pin the panel to its current viewport rect so the size grows from the
+    // dragged corner regardless of the docked anchor, dropping the flow layout
+    // and the dynamic max caps for the duration of the drag.
+    const prevPosition = panel.style.position;
+    panel.style.position = 'fixed';
+    panel.style.left = `${startLeft}px`;
+    panel.style.top = `${startTop}px`;
+    panel.style.right = '';
+    panel.style.bottom = '';
+    panel.style.maxWidth = 'none';
+    panel.style.maxHeight = 'none';
+    panel.style.width = `${startWidth}px`;
+    panel.style.height = `${startHeight}px`;
+
+    const onMove = (moveEvent: PointerEvent): void => {
+      const dx = moveEvent.clientX - startX;
+      const dy = moveEvent.clientY - startY;
+
+      const maxHeight = Math.max(minHeight, mapRect.bottom - startTop - PANEL_EDGE_MARGIN);
+      const nextHeight = Math.max(minHeight, Math.min(startHeight + dy, maxHeight));
+
+      let nextWidth: number;
+      let nextLeft = startLeft;
+      if (side === 'right') {
+        const maxWidth = Math.max(minWidth, mapRect.right - startLeft - PANEL_EDGE_MARGIN);
+        nextWidth = Math.max(minWidth, Math.min(startWidth + dx, maxWidth));
+      } else {
+        const maxWidth = Math.max(minWidth, startRight - mapRect.left - PANEL_EDGE_MARGIN);
+        nextWidth = Math.max(minWidth, Math.min(startWidth - dx, maxWidth));
+        // Hold the right edge fixed while the left edge follows the drag.
+        nextLeft = startLeft + (startWidth - nextWidth);
+      }
+
+      panel.style.width = `${nextWidth}px`;
+      panel.style.height = `${nextHeight}px`;
+      panel.style.left = `${nextLeft}px`;
+      this._userPanelSize = { width: nextWidth, height: nextHeight };
     };
-    const onEnd = (event: PointerEvent): void => {
+
+    const cleanup = (): void => {
       handle.releasePointerCapture?.(event.pointerId);
       handle.removeEventListener('pointermove', onMove);
-      handle.removeEventListener('pointerup', onEnd);
-      handle.removeEventListener('pointercancel', onEnd);
+      handle.removeEventListener('pointerup', cleanup);
+      handle.removeEventListener('pointercancel', cleanup);
+      // Return the panel to its normal docked flow position, keeping only the
+      // chosen width / height (re-applied and clamped by _applyUserPanelSize).
+      panel.style.position = prevPosition;
+      panel.style.left = '';
+      panel.style.top = '';
+      panel.style.right = '';
+      panel.style.bottom = '';
+      panel.style.maxWidth = '';
+      this._updatePanelSize();
     };
-    handle.addEventListener('pointerdown', (event) => {
-      const mapContainer = this._getMapContainer();
-      if (!this._panel || !mapContainer) return;
-      event.preventDefault();
-      event.stopPropagation();
-      placeHandle();
-      const pos = this._getControlPosition();
-      right = pos.endsWith('right');
-      bottom = pos.startsWith('bottom');
-      const mapRect = mapContainer.getBoundingClientRect();
-      const rect = this._panel.getBoundingClientRect();
-      startX = event.clientX;
-      startY = event.clientY;
-      startW = rect.width;
-      startH = rect.height;
-      // The anchored edge is fixed, so the room to grow is constant for the
-      // whole drag: from that edge to the opposite map edge, less a margin.
-      maxW =
-        (right ? rect.right - mapRect.left : mapRect.right - rect.left) -
-        PANEL_EDGE_MARGIN;
-      maxH =
-        (bottom ? rect.bottom - mapRect.top : mapRect.bottom - rect.top) -
-        PANEL_EDGE_MARGIN;
-      handle.setPointerCapture?.(event.pointerId);
-      handle.addEventListener('pointermove', onMove);
-      handle.addEventListener('pointerup', onEnd);
-      // Touch / pen drags can end with pointercancel instead of pointerup.
-      handle.addEventListener('pointercancel', onEnd);
-    });
+
+    handle.setPointerCapture?.(event.pointerId);
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', cleanup);
+    // Touch / pen drags can end with pointercancel instead of pointerup.
+    handle.addEventListener('pointercancel', cleanup);
   }
 
   private _createFormGroup(label: string): HTMLElement {
