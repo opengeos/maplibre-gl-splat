@@ -108,6 +108,21 @@ describe('GaussianSplatControl', () => {
     expect(control.getState().url).toBe('https://example.com/bonsai.splat');
   });
 
+  it('creates a custom resize handle on the expanded panel', async () => {
+    const { GaussianSplatControl } = await import('../lib/core/GaussianSplatControl');
+    const control = new GaussianSplatControl({ collapsed: false });
+    const mapStub = {
+      on: vi.fn(),
+      once: vi.fn(),
+      off: vi.fn(),
+      getContainer: vi.fn(() => document.createElement('div')),
+    };
+    const container = control.onAdd(mapStub as never);
+
+    const handle = container.querySelector('.maplibre-gl-splat-resize');
+    expect(handle).not.toBeNull();
+  });
+
   it('renders no sample dropdown by default', async () => {
     const { GaussianSplatControl } = await import('../lib/core/GaussianSplatControl');
     const control = new GaussianSplatControl({ collapsed: false });
