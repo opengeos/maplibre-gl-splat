@@ -85,6 +85,37 @@ describe('GaussianSplatControl', () => {
     expect(state.scale).toBe(2);
   });
 
+  it('renders a sample dropdown that fills the URL input on selection', async () => {
+    const { GaussianSplatControl } = await import('../lib/core/GaussianSplatControl');
+    const control = new GaussianSplatControl({
+      collapsed: false,
+      sampleData: [
+        { label: 'Garden', url: 'https://example.com/garden.splat' },
+        { label: 'Bonsai', url: 'https://example.com/bonsai.splat' },
+      ],
+    });
+    const mapStub = { on: vi.fn(), once: vi.fn(), off: vi.fn() };
+    const container = control.onAdd(mapStub as never);
+
+    const trigger = container.querySelector('.splat-sample-trigger') as HTMLButtonElement;
+    expect(
+      trigger.querySelector('.splat-sample-trigger-label')?.textContent,
+    ).toBe('Load sample data...');
+    const options = [...container.querySelectorAll('.splat-sample-option')];
+    expect(options.map((o) => o.textContent)).toEqual(['Garden', 'Bonsai']);
+
+    (options[1] as HTMLButtonElement).click();
+    expect(control.getState().url).toBe('https://example.com/bonsai.splat');
+  });
+
+  it('renders no sample dropdown by default', async () => {
+    const { GaussianSplatControl } = await import('../lib/core/GaussianSplatControl');
+    const control = new GaussianSplatControl({ collapsed: false });
+    const mapStub = { on: vi.fn(), once: vi.fn(), off: vi.fn() };
+    const container = control.onAdd(mapStub as never);
+    expect(container.querySelector('.splat-sample-menu')).toBeNull();
+  });
+
   it('should toggle collapsed state', async () => {
     const { GaussianSplatControl } = await import('../lib/core/GaussianSplatControl');
     const control = new GaussianSplatControl({ collapsed: true });
