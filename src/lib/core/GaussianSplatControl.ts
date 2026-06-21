@@ -782,6 +782,7 @@ export class GaussianSplatControl implements IControl {
     panel.style.cssText = `
       box-sizing: border-box;
       padding: 12px;
+      position: relative;
       width: ${this._options.panelWidth}px;
       display: flex;
       flex-direction: column;
@@ -1117,6 +1118,27 @@ export class GaussianSplatControl implements IControl {
       const handle = document.createElement('div');
       handle.className = `maplibre-gl-splat-resize-handle maplibre-gl-splat-resize-${side}`;
       handle.setAttribute('aria-hidden', 'true');
+      // This control styles every element inline because the bundled stylesheet
+      // is not guaranteed to be loaded by the host app, so the grip is
+      // positioned and drawn here rather than via a class. A diagonal-stripe
+      // background reads as a resize affordance and is visible on light and dark
+      // panels without needing a pseudo-element.
+      handle.style.cssText = `
+        position: absolute;
+        bottom: 0;
+        ${side}: 0;
+        width: 16px;
+        height: 16px;
+        z-index: 5;
+        cursor: ${side === 'right' ? 'nwse' : 'nesw'}-resize;
+        touch-action: none;
+        opacity: 0.6;
+        background-image: repeating-linear-gradient(
+          ${side === 'right' ? '135deg' : '45deg'},
+          rgba(128, 128, 128, 0.9) 0 1px,
+          transparent 1px 3px
+        );
+      `;
       handle.addEventListener('pointerdown', (event) =>
         this._beginResize(event, side, panel, handle)
       );
