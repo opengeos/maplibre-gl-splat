@@ -37,7 +37,12 @@ export interface GaussianSplatControlOptions {
   title?: string;
   /** Panel width in pixels. Default: 320. */
   panelWidth?: number;
-  /** Maximum height of the panel in pixels. Default: 500. */
+  /**
+   * Deprecated. The panel now sizes to its content and grows to the room
+   * available between its corner and the opposite map edge, capped dynamically.
+   * Retained for backward compatibility; no longer forces a fixed height.
+   * Default: 500.
+   */
   maxHeight?: number;
   /** Default URL to load. */
   defaultUrl?: string;
@@ -163,6 +168,21 @@ const DEFAULT_OPTIONS: Required<GaussianSplatControlOptions> = {
 };
 
 /**
+ * Minimum width the panel can be shrunk to with the resize handle (px).
+ */
+const PANEL_MIN_WIDTH = 260;
+
+/**
+ * Minimum height the panel can be shrunk to with the resize handle (px).
+ */
+const PANEL_MIN_HEIGHT = 180;
+
+/**
+ * Breathing room kept between the panel and the opposite map edge (px).
+ */
+const PANEL_EDGE_MARGIN = 12;
+
+/**
  * Splat icon SVG for the control button.
  */
 const SPLAT_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -189,11 +209,16 @@ const SPLAT_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="1
 export class GaussianSplatControl implements IControl {
   private _map?: MapLibreMap;
   private _container?: HTMLElement;
-  // @ts-expect-error - Used for future panel reference
   private _panel?: HTMLElement;
   private _options: Required<GaussianSplatControlOptions>;
   private _state: GaussianSplatControlState;
   private _eventHandlers: Map<GaussianSplatEvent, Set<GaussianSplatEventHandler>> = new Map();
+
+  // Panel sizing: user-chosen size from the resize handle (px), re-applied on
+  // every render / reposition so it survives re-render and window resize.
+  private _userPanelSize: { width: number; height: number } | null = null;
+  private _resizeHandler?: () => void;
+  private _mapResizeHandler?: () => void;
 
   // THREE.js / MapLibre bridge
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -232,6 +257,17 @@ export class GaussianSplatControl implements IControl {
     // Initialize THREE.js scene
     this._initMapScene();
 
+    // Keep the panel's dynamic max-height and any user-chosen size in sync with
+    // the available room when the window or the map container is resized.
+    this._resizeHandler = () => {
+      if (!this._state.collapsed) this._updatePanelSize();
+    };
+    window.addEventListener('resize', this._resizeHandler);
+    this._mapResizeHandler = () => {
+      if (!this._state.collapsed) this._updatePanelSize();
+    };
+    map.on('resize', this._mapResizeHandler);
+
     // Auto-load default URL if specified
     if (this._options.loadDefaultUrl && this._options.defaultUrl) {
       this._idleHandler = () => {
@@ -251,6 +287,15 @@ export class GaussianSplatControl implements IControl {
     if (this._idleHandler && this._map) {
       this._map.off('idle', this._idleHandler);
       this._idleHandler = undefined;
+    }
+
+    if (this._resizeHandler) {
+      window.removeEventListener('resize', this._resizeHandler);
+      this._resizeHandler = undefined;
+    }
+    if (this._mapResizeHandler && this._map) {
+      this._map.off('resize', this._mapResizeHandler);
+      this._mapResizeHandler = undefined;
     }
 
     this._removeAllLayers();
@@ -730,11 +775,17 @@ export class GaussianSplatControl implements IControl {
 
     const panel = document.createElement('div');
     panel.className = 'maplibre-gl-splat-panel';
+    // Size to content but grow to the room available between the panel and the
+    // opposite map edge (computed in _updatePanelSize). A flex column keeps the
+    // header / resize handle fixed while the content area scrolls on overflow.
+    // Do not force a fixed height here; maxHeight is driven dynamically.
     panel.style.cssText = `
+      box-sizing: border-box;
       padding: 12px;
+      position: relative;
       width: ${this._options.panelWidth}px;
-      max-height: ${this._options.maxHeight}px;
-      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
       font-size: 13px;
       color: #333;
     `;
@@ -742,6 +793,7 @@ export class GaussianSplatControl implements IControl {
     // Header
     const header = document.createElement('div');
     header.style.cssText = `
+      flex: 0 0 auto;
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -771,6 +823,13 @@ export class GaussianSplatControl implements IControl {
 
     panel.appendChild(header);
 
+    // Scrolling content area: grows to fill the capped panel height and scrolls
+    // only when the content overflows. min-height: 0 lets it shrink in the flex
+    // column so the overflow actually engages.
+    const content = document.createElement('div');
+    content.className = 'maplibre-gl-splat-content';
+    content.style.cssText = 'flex: 1 1 auto; overflow-y: auto; min-height: 0;';
+
     // URL input
     const urlGroup = this._createFormGroup('3D Asset URL (.splat, .ply, .spz, .gltf, .glb)');
     const urlInput = document.createElement('input');
@@ -793,8 +852,8 @@ export class GaussianSplatControl implements IControl {
       urlInput.value = url;
       this._state.url = url;
     });
-    if (sampleDropdown) panel.appendChild(sampleDropdown);
-    panel.appendChild(urlGroup);
+    if (sampleDropdown) content.appendChild(sampleDropdown);
+    content.appendChild(urlGroup);
 
     // Location inputs
     const locGroup = this._createFormGroup('Location (Longitude, Latitude, Altitude)');
@@ -815,7 +874,7 @@ export class GaussianSplatControl implements IControl {
     locRow.appendChild(latInput);
     locRow.appendChild(altInput);
     locGroup.appendChild(locRow);
-    panel.appendChild(locGroup);
+    content.appendChild(locGroup);
 
     // Rotation inputs (X, Y, Z in degrees)
     const rotGroup = this._createFormGroup('Rotation (°)');
@@ -836,7 +895,7 @@ export class GaussianSplatControl implements IControl {
     rotRow.appendChild(rotYInput);
     rotRow.appendChild(rotZInput);
     rotGroup.appendChild(rotRow);
-    panel.appendChild(rotGroup);
+    content.appendChild(rotGroup);
 
     // Scale input
     const scaleGroup = this._createFormGroup('Scale');
@@ -856,7 +915,7 @@ export class GaussianSplatControl implements IControl {
       this._state.scale = Number(scaleInput.value) || 1;
     });
     scaleGroup.appendChild(scaleInput);
-    panel.appendChild(scaleGroup);
+    content.appendChild(scaleGroup);
 
     // Load button
     const loadBtn = document.createElement('button');
@@ -886,15 +945,15 @@ export class GaussianSplatControl implements IControl {
         });
       }
     });
-    panel.appendChild(loadBtn);
+    content.appendChild(loadBtn);
 
     // Status/error
     if (this._state.loading) {
-      panel.appendChild(this._createStatus('Loading...', 'info'));
+      content.appendChild(this._createStatus('Loading...', 'info'));
     } else if (this._state.error) {
-      panel.appendChild(this._createStatus(this._state.error, 'error'));
+      content.appendChild(this._createStatus(this._state.error, 'error'));
     } else if (this._state.status) {
-      panel.appendChild(this._createStatus(this._state.status, 'success'));
+      content.appendChild(this._createStatus(this._state.status, 'success'));
     }
 
     // Layer list (splats and models)
@@ -928,11 +987,280 @@ export class GaussianSplatControl implements IControl {
         listDiv.appendChild(item);
       }
 
-      panel.appendChild(listDiv);
+      content.appendChild(listDiv);
     }
+
+    panel.appendChild(content);
+    this._addResizeHandles(panel);
 
     this._container.appendChild(panel);
     this._panel = panel;
+
+    // Drive the dynamic max-height and re-apply any user-chosen size now that
+    // the panel is in the DOM and its geometry is known.
+    this._updatePanelSize();
+  }
+
+  /**
+   * Detect which corner the control is docked in by inspecting the MapLibre
+   * control container's position class.
+   *
+   * @returns The corner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'.
+   */
+  private _getControlPosition():
+    | 'top-left'
+    | 'top-right'
+    | 'bottom-left'
+    | 'bottom-right' {
+    const parent = this._container?.parentElement;
+    if (parent?.classList.contains('maplibregl-ctrl-top-left')) return 'top-left';
+    if (parent?.classList.contains('maplibregl-ctrl-bottom-left')) return 'bottom-left';
+    if (parent?.classList.contains('maplibregl-ctrl-bottom-right')) return 'bottom-right';
+    return 'top-right';
+  }
+
+  /**
+   * Returns the map container element MapLibre renders into, used to measure the
+   * room available for the panel.
+   *
+   * @returns The map container element, or undefined if the map is detached.
+   */
+  private _getMapContainer(): HTMLElement | undefined {
+    if (typeof this._map?.getContainer !== 'function') return undefined;
+    return this._map.getContainer();
+  }
+
+  /**
+   * Size the panel to its content while letting it grow up to the vertical room
+   * available between its anchored corner and the opposite map edge (less a
+   * small margin). Does not force a fixed height: a dynamic max-height is set so
+   * the content area scrolls only on overflow. Re-applies any user-chosen size
+   * from the resize handle so it survives re-render and window / map resize.
+   */
+  private _updatePanelSize(): void {
+    if (!this._panel) return;
+    const mapContainer = this._getMapContainer();
+    if (!mapContainer) return;
+
+    const mapRect = mapContainer.getBoundingClientRect();
+    const panelRect = this._panel.getBoundingClientRect();
+    const position = this._getControlPosition();
+    const bottom = position.startsWith('bottom');
+
+    // Offset of the panel's anchored (top or bottom) edge from the same map
+    // edge. The panel is in normal flow inside the corner-anchored control
+    // container, so its current rect already reflects that offset.
+    const anchorOffset = bottom
+      ? mapRect.bottom - panelRect.bottom
+      : panelRect.top - mapRect.top;
+
+    // Room from the anchored edge to the opposite map edge, less a margin. The
+    // 160px floor keeps the panel usable on a tiny map; overflow-y then scrolls.
+    const available = Math.max(
+      160,
+      mapRect.height - anchorOffset - PANEL_EDGE_MARGIN
+    );
+    this._panel.style.maxHeight = `min(80vh, 720px, ${available}px)`;
+
+    this._applyUserPanelSize();
+  }
+
+  /**
+   * Apply the user-chosen panel size from the resize handle, clamped to the room
+   * available from the panel's anchored corner to the opposite map edge so a
+   * small map cannot leave an overflowing panel after re-render.
+   */
+  private _applyUserPanelSize(): void {
+    if (!this._panel || !this._userPanelSize) return;
+    const mapContainer = this._getMapContainer();
+    if (!mapContainer) return;
+
+    const mapRect = mapContainer.getBoundingClientRect();
+    const panelRect = this._panel.getBoundingClientRect();
+    const position = this._getControlPosition();
+    const right = position.endsWith('right');
+    const bottom = position.startsWith('bottom');
+
+    const maxW =
+      (right ? panelRect.right - mapRect.left : mapRect.right - panelRect.left) -
+      PANEL_EDGE_MARGIN;
+    const maxH =
+      (bottom ? panelRect.bottom - mapRect.top : mapRect.bottom - panelRect.top) -
+      PANEL_EDGE_MARGIN;
+
+    const width = Math.min(
+      Math.max(PANEL_MIN_WIDTH, this._userPanelSize.width),
+      Math.max(0, maxW)
+    );
+    const height = Math.min(
+      Math.max(PANEL_MIN_HEIGHT, this._userPanelSize.height),
+      Math.max(0, maxH)
+    );
+
+    this._panel.style.maxHeight = 'none';
+    this._panel.style.width = `${width}px`;
+    this._panel.style.height = `${height}px`;
+  }
+
+  /**
+   * Add two pointer-driven resize grips, one in each bottom corner of the
+   * panel, matching the UX shipped in maplibre-gl-vector. The bottom-right grip
+   * grows the panel rightward, the bottom-left grip grows it leftward, and both
+   * grow it downward. Custom grips are used instead of CSS `resize`, which is
+   * unreliable in WebKitGTK. The chosen size is persisted on the control and
+   * re-applied (clamped to the room available) on re-render and window / map
+   * resize.
+   *
+   * @param panel - The panel element to make resizable.
+   */
+  private _addResizeHandles(panel: HTMLElement): void {
+    for (const side of ['left', 'right'] as const) {
+      const handle = document.createElement('div');
+      handle.className = `maplibre-gl-splat-resize-handle maplibre-gl-splat-resize-${side}`;
+      handle.setAttribute('aria-hidden', 'true');
+      // This control styles every element inline because the bundled stylesheet
+      // is not guaranteed to be loaded by the host app, so the grip is
+      // positioned and drawn here rather than via a class. A diagonal-stripe
+      // background reads as a resize affordance and is visible on light and dark
+      // panels without needing a pseudo-element.
+      handle.style.cssText = `
+        position: absolute;
+        bottom: 0;
+        ${side}: 0;
+        width: 16px;
+        height: 16px;
+        z-index: 5;
+        cursor: ${side === 'right' ? 'nwse' : 'nesw'}-resize;
+        touch-action: none;
+        opacity: 0.6;
+        background-image: repeating-linear-gradient(
+          ${side === 'right' ? '135deg' : '45deg'},
+          rgba(128, 128, 128, 0.9) 0 1px,
+          transparent 1px 3px
+        );
+      `;
+      handle.addEventListener('pointerdown', (event) =>
+        this._beginResize(event, side, panel, handle)
+      );
+      panel.appendChild(handle);
+    }
+  }
+
+  /**
+   * Start a pointer-driven resize from one of the bottom-corner grips.
+   *
+   * The splat panel renders in normal document flow inside the corner-anchored
+   * MapLibre control container, so it has no absolute position in the map
+   * container. To run the same corner-anchored math as maplibre-gl-vector, the
+   * panel is temporarily given `position: fixed` and pinned to its current
+   * viewport rect (from getBoundingClientRect) for the duration of the drag.
+   * The right grip then grows the width rightward (left edge fixed); the left
+   * grip grows the width leftward while holding the right edge fixed; both grow
+   * the height downward. Sizes are clamped to a minimum and to the map
+   * container rect (less an edge margin). On pointerup / cancel the temporary
+   * `position: fixed` (and left/top) is removed so the panel returns to its
+   * normal docked flow position, while the chosen width / height is kept on
+   * `_userPanelSize` and re-applied by `_applyUserPanelSize`.
+   *
+   * @param event - The pointerdown event.
+   * @param side - Which bottom-corner grip started the drag.
+   * @param panel - The panel element being resized.
+   * @param handle - The grip element (for pointer capture).
+   */
+  private _beginResize(
+    event: PointerEvent,
+    side: 'left' | 'right',
+    panel: HTMLElement,
+    handle: HTMLElement
+  ): void {
+    const mapContainer = this._getMapContainer();
+    if (!mapContainer) return;
+    event.preventDefault();
+    // Keep the drag from bubbling to any outside click / close handler.
+    event.stopPropagation();
+
+    const mapRect = mapContainer.getBoundingClientRect();
+    const rect = panel.getBoundingClientRect();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startWidth = rect.width;
+    const startHeight = rect.height;
+    // Viewport coordinates, so the corner-anchored math works regardless of the
+    // flow parent once the panel is pinned with position: fixed below.
+    const startLeft = rect.left;
+    const startRight = rect.right;
+    const startTop = rect.top;
+
+    // Clamp the preferred minimums to what the map can actually hold.
+    const minWidth = Math.min(
+      PANEL_MIN_WIDTH,
+      Math.max(120, mapRect.width - 2 * PANEL_EDGE_MARGIN)
+    );
+    const minHeight = Math.min(
+      PANEL_MIN_HEIGHT,
+      Math.max(120, mapRect.height - 2 * PANEL_EDGE_MARGIN)
+    );
+
+    // Pin the panel to its current viewport rect so the size grows from the
+    // dragged corner regardless of the docked anchor, dropping the flow layout
+    // and the dynamic max caps for the duration of the drag.
+    const prevPosition = panel.style.position;
+    panel.style.position = 'fixed';
+    panel.style.left = `${startLeft}px`;
+    panel.style.top = `${startTop}px`;
+    panel.style.right = '';
+    panel.style.bottom = '';
+    panel.style.maxWidth = 'none';
+    panel.style.maxHeight = 'none';
+    panel.style.width = `${startWidth}px`;
+    panel.style.height = `${startHeight}px`;
+
+    const onMove = (moveEvent: PointerEvent): void => {
+      const dx = moveEvent.clientX - startX;
+      const dy = moveEvent.clientY - startY;
+
+      const maxHeight = Math.max(minHeight, mapRect.bottom - startTop - PANEL_EDGE_MARGIN);
+      const nextHeight = Math.max(minHeight, Math.min(startHeight + dy, maxHeight));
+
+      let nextWidth: number;
+      let nextLeft = startLeft;
+      if (side === 'right') {
+        const maxWidth = Math.max(minWidth, mapRect.right - startLeft - PANEL_EDGE_MARGIN);
+        nextWidth = Math.max(minWidth, Math.min(startWidth + dx, maxWidth));
+      } else {
+        const maxWidth = Math.max(minWidth, startRight - mapRect.left - PANEL_EDGE_MARGIN);
+        nextWidth = Math.max(minWidth, Math.min(startWidth - dx, maxWidth));
+        // Hold the right edge fixed while the left edge follows the drag.
+        nextLeft = startLeft + (startWidth - nextWidth);
+      }
+
+      panel.style.width = `${nextWidth}px`;
+      panel.style.height = `${nextHeight}px`;
+      panel.style.left = `${nextLeft}px`;
+      this._userPanelSize = { width: nextWidth, height: nextHeight };
+    };
+
+    const cleanup = (): void => {
+      handle.releasePointerCapture?.(event.pointerId);
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', cleanup);
+      handle.removeEventListener('pointercancel', cleanup);
+      // Return the panel to its normal docked flow position, keeping only the
+      // chosen width / height (re-applied and clamped by _applyUserPanelSize).
+      panel.style.position = prevPosition;
+      panel.style.left = '';
+      panel.style.top = '';
+      panel.style.right = '';
+      panel.style.bottom = '';
+      panel.style.maxWidth = '';
+      this._updatePanelSize();
+    };
+
+    handle.setPointerCapture?.(event.pointerId);
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', cleanup);
+    // Touch / pen drags can end with pointercancel instead of pointerup.
+    handle.addEventListener('pointercancel', cleanup);
   }
 
   private _createFormGroup(label: string): HTMLElement {
