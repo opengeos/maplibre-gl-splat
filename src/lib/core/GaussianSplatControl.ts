@@ -210,6 +210,7 @@ export class GaussianSplatControl implements IControl {
   private _map?: MapLibreMap;
   private _container?: HTMLElement;
   private _panel?: HTMLElement;
+  private _loadButton?: HTMLButtonElement;
   private _options: Required<GaussianSplatControlOptions>;
   private _state: GaussianSplatControlState;
   private _eventHandlers: Map<GaussianSplatEvent, Set<GaussianSplatEventHandler>> = new Map();
@@ -828,10 +829,11 @@ export class GaussianSplatControl implements IControl {
     // column so the overflow actually engages.
     const content = document.createElement('div');
     content.className = 'maplibre-gl-splat-content';
-    // scrollbar-gutter reserves space for the scrollbar so it does not overlay
-    // the right edge of the form fields when the content scrolls.
+    // Scrolls only when the content exceeds the panel's max-height. No
+    // scrollbar-gutter: reserving it left a wide right margin even when no
+    // scrollbar was shown; the default gutter only takes space when scrolling.
     content.style.cssText =
-      'flex: 1 1 auto; overflow-y: auto; min-height: 0; scrollbar-gutter: stable;';
+      'flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; min-height: 0;';
 
     // URL input
     const urlGroup = this._createFormGroup('3D Asset URL (.splat, .ply, .spz, .gltf, .glb)');
@@ -849,11 +851,13 @@ export class GaussianSplatControl implements IControl {
     `;
     urlInput.addEventListener('input', () => {
       this._state.url = urlInput.value;
+      this._syncLoadButton();
     });
     urlGroup.appendChild(urlInput);
     const sampleDropdown = this._createSampleDropdown((url) => {
       urlInput.value = url;
       this._state.url = url;
+      this._syncLoadButton();
     });
     if (sampleDropdown) content.appendChild(sampleDropdown);
     content.appendChild(urlGroup);
@@ -925,10 +929,16 @@ export class GaussianSplatControl implements IControl {
     loadBtn.textContent = 'Load 3D Asset';
     loadBtn.disabled = this._state.loading || !this._state.url;
     loadBtn.style.cssText = `
+      box-sizing: border-box;
       width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       padding: 10px 16px;
+      font: inherit;
       font-size: 12px;
       font-weight: 500;
+      line-height: 1;
       border: none;
       border-radius: 4px;
       background: #0078d7;
@@ -937,6 +947,7 @@ export class GaussianSplatControl implements IControl {
       margin-top: 12px;
       opacity: ${this._state.loading || !this._state.url ? '0.5' : '1'};
     `;
+    this._loadButton = loadBtn;
     loadBtn.addEventListener('click', () => {
       if (this._state.url) {
         this.load(this._state.url, {
@@ -1031,6 +1042,19 @@ export class GaussianSplatControl implements IControl {
   private _getMapContainer(): HTMLElement | undefined {
     if (typeof this._map?.getContainer !== 'function') return undefined;
     return this._map.getContainer();
+  }
+
+  /**
+   * Re-evaluates the Load button's enabled state from the current URL. Called
+   * whenever the URL input changes, including when a sample dataset is picked
+   * (which sets the input value programmatically and would not otherwise fire an
+   * `input` event), so the button enables as soon as there is a URL to load.
+   */
+  private _syncLoadButton(): void {
+    if (!this._loadButton) return;
+    const disabled = this._state.loading || !this._state.url;
+    this._loadButton.disabled = disabled;
+    this._loadButton.style.opacity = disabled ? '0.5' : '1';
   }
 
   /**
@@ -1134,17 +1158,20 @@ export class GaussianSplatControl implements IControl {
         position: absolute;
         bottom: 0;
         ${side}: 0;
-        width: 16px;
-        height: 16px;
+        width: 14px;
+        height: 14px;
         z-index: 5;
         cursor: ${side === 'right' ? 'nwse' : 'nesw'}-resize;
         touch-action: none;
-        opacity: 0.6;
+        opacity: 0.55;
         background-image: repeating-linear-gradient(
           ${side === 'right' ? '135deg' : '45deg'},
           rgba(128, 128, 128, 0.9) 0 1px,
           transparent 1px 3px
         );
+        background-size: 8px 8px;
+        background-repeat: no-repeat;
+        background-position: bottom ${side};
       `;
       handle.addEventListener('pointerdown', (event) =>
         this._beginResize(event, panel, handle)
