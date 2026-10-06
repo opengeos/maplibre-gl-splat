@@ -39,7 +39,7 @@
   ],
   "scripts": {
     "dev": "vite",
-    "build": "vite build && tsc -p tsconfig.build.json",
+    "build": "vite build && vite build --mode cjs && tsc -p tsconfig.build.json",
     "build:examples": "vite build --config vite.examples.config.ts",
     "preview": "vite preview",
     "test": "vitest --run",
