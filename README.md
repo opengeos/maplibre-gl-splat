@@ -16,8 +16,10 @@ A MapLibre GL JS plugin for visualizing 3D Gaussian Splats on maps.
 ## Installation
 
 ```bash
-npm install maplibre-gl-splat
+npm install maplibre-gl-splat three
 ```
+
+`three` is a peer dependency, so your app and this package share one copy. `@dvt3d/maplibre-three-plugin` (a dependency) declares `three: ^0.178.0`, so if your app uses a newer three, pin a single version with an npm `overrides` entry (for example `"overrides": { "three": "^0.186.1" }`) to keep one copy in the bundle.
 
 ## Quick Start
 
