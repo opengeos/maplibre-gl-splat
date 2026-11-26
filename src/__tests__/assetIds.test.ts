@@ -234,3 +234,26 @@ describe('show and hide', () => {
     expect(container.style.display).toBe('none');
   });
 });
+
+describe('failed id claims', () => {
+  it('adds nothing to the scene when isIdReserved throws', async () => {
+    const { control } = await mountedControl({
+      isIdReserved: () => {
+        throw new Error('boom');
+      },
+    });
+    scene.addObject.mockClear();
+    await expect(control.loadSplat('https://example.com/a.splat')).rejects.toThrow('boom');
+    await expect(control.loadModel('https://example.com/a.glb')).rejects.toThrow('boom');
+    expect(scene.addObject).not.toHaveBeenCalled();
+  });
+
+  it('stores the rotation as it was when the load started', async () => {
+    const { control } = await mountedControl();
+    const rotation: [number, number, number] = [1, 2, 3];
+    const pending = control.loadModel('https://example.com/a.glb', { rotation });
+    rotation[0] = 99;
+    const id = await pending;
+    expect(control.getAssetPlacement(id)!.rotation).toEqual([1, 2, 3]);
+  });
+});

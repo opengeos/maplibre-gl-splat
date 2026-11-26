@@ -517,7 +517,14 @@ export class GaussianSplatControl implements IControl {
     const lng = options?.longitude ?? (this._state.longitude || this._map.getCenter().lng);
     const lat = options?.latitude ?? (this._state.latitude || this._map.getCenter().lat);
     const alt = options?.altitude ?? (this._state.altitude || 0);
-    const rotation = options?.rotation ?? this._state.rotation;
+    // Snapshot the rotation so a caller mutating its array mid-load cannot make
+    // the stored placement disagree with the scene.
+    const resolvedRotation = options?.rotation ?? this._state.rotation;
+    const rotation: [number, number, number] = [
+      resolvedRotation[0],
+      resolvedRotation[1],
+      resolvedRotation[2],
+    ];
     const scale = options?.scale ?? this._state.scale;
     this._assertIdFree(options?.id);
 
@@ -531,6 +538,10 @@ export class GaussianSplatControl implements IControl {
     this._render();
 
     try {
+      // Take the ID before touching the scene, so a failed claim (for example
+      // an isIdReserved callback that throws) leaves nothing behind.
+      const layerId = this._claimId('splat', options?.id);
+
       // Create RTC group for georeferenced positioning
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const rtcGroup = (MTP.Creator as any).createMercatorRTCGroup(
@@ -560,7 +571,6 @@ export class GaussianSplatControl implements IControl {
       this._mapScene.addObject(rtcGroup);
 
       // Store layer info
-      const layerId = this._claimId('splat', options?.id);
       this._splatLayers.set(layerId, {
         id: layerId,
         url,
@@ -569,7 +579,7 @@ export class GaussianSplatControl implements IControl {
         longitude: lng,
         latitude: lat,
         altitude: alt,
-        rotation: [rotation[0], rotation[1], rotation[2]],
+        rotation,
         scale,
       });
 
@@ -627,7 +637,12 @@ export class GaussianSplatControl implements IControl {
     const lat = options?.latitude ?? (this._state.latitude || this._map.getCenter().lat);
     const alt = options?.altitude ?? (this._state.altitude || 0);
     // Use model-specific rotation defaults for GLTF/GLB
-    const rotation = options?.rotation ?? this._options.defaultModelRotation;
+    const resolvedRotation = options?.rotation ?? this._options.defaultModelRotation;
+    const rotation: [number, number, number] = [
+      resolvedRotation[0],
+      resolvedRotation[1],
+      resolvedRotation[2],
+    ];
     const scale = options?.scale ?? this._state.scale;
     this._assertIdFree(options?.id);
 
@@ -686,7 +701,7 @@ export class GaussianSplatControl implements IControl {
         longitude: lng,
         latitude: lat,
         altitude: alt,
-        rotation: [rotation[0], rotation[1], rotation[2]],
+        rotation,
         scale,
       });
 

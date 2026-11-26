@@ -203,8 +203,9 @@ splatControl.off(event, handler): void
 #### Saving and restoring assets
 
 `getAssetPlacement` (or the `placement` on a load event) gives everything needed
-to put an asset back: pass it to `load` with its `id` to restore it under the
-same ID, and use `isIdReserved` so assets loaded meanwhile never take a saved ID.
+to put an asset back: pass it to `loadSplat` or `loadModel` (by its `type`) with
+its `id` to restore it under the same ID, and use `isIdReserved` so assets
+loaded meanwhile never take a saved ID.
 
 ```typescript
 const saved = new Map<string, GaussianSplatAssetPlacement>();
@@ -212,9 +213,12 @@ const control = new GaussianSplatControl({ isIdReserved: (id) => saved.has(id) }
 control.on('splatload', (e) => e.placement && saved.set(e.placement.id, e.placement));
 control.on('modelload', (e) => e.placement && saved.set(e.placement.id, e.placement));
 
-// Later, on a new control:
-for (const { url, ...placement } of saved.values()) {
-  await control.load(url, { ...placement, flyTo: false });
+// Later (for example after reopening a project), on a new control:
+const restored = new GaussianSplatControl({ isIdReserved: (id) => saved.has(id) });
+map.addControl(restored);
+for (const { url, type, ...placement } of saved.values()) {
+  const load = type === 'model' ? restored.loadModel : restored.loadSplat;
+  await load.call(restored, url, { ...placement, flyTo: false });
 }
 ```
 
