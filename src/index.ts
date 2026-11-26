@@ -14,4 +14,7 @@ export type {
   GaussianSplatControlState,
   GaussianSplatEvent,
   GaussianSplatEventHandler,
+  GaussianSplatAssetType,
+  GaussianSplatLoadOptions,
+  GaussianSplatAssetPlacement,
 } from './lib/core/types';
