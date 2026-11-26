@@ -127,20 +127,28 @@ interface GaussianSplatControlOptions {
   defaultAltitude?: number;        // Default altitude (default: 0)
   flyTo?: boolean;                 // Fly to splat location (default: true)
   flyToZoom?: number;              // Zoom level when flying (default: 18)
+  isIdReserved?: (id: string) => boolean; // IDs generated IDs must skip (default: none)
 }
 ```
 
 #### Methods
 
 ```typescript
-// Load a splat from URL
-splatControl.loadSplat(url: string, options?: {
+// Load options shared by load(), loadSplat() and loadModel()
+interface GaussianSplatLoadOptions {
   longitude?: number;
   latitude?: number;
   altitude?: number;
   rotation?: [number, number, number];
   scale?: number;
-}): Promise<string>  // Returns layer ID
+  id?: string;      // Load under this ID (rejects if already loaded)
+  flyTo?: boolean;  // Override the flyTo option for this call
+}
+
+// Load a splat or model from URL (GLTF/GLB go to loadModel)
+splatControl.load(url: string, options?: GaussianSplatLoadOptions): Promise<string>
+splatControl.loadSplat(url: string, options?: GaussianSplatLoadOptions): Promise<string>  // Returns layer ID
+splatControl.loadModel(url: string, options?: GaussianSplatLoadOptions): Promise<string>
 
 // Remove a splat by ID
 splatControl.removeSplat(layerId: string): void
@@ -153,6 +161,20 @@ splatControl.getSplatIds(): string[]
 
 // Get info about a splat
 splatControl.getSplatInfo(layerId: string): { url, longitude, latitude, altitude } | null
+
+// Get all model layer IDs
+splatControl.getModelIds(): string[]
+
+// Get a loaded splat's or model's placement, as resolved at load time
+splatControl.getAssetPlacement(layerId: string): {
+  id, type: 'splat' | 'model', url, longitude, latitude, altitude,
+  rotation: [number, number, number], scale
+} | null
+
+// Hide or show the control's button/panel; loaded assets keep drawing
+splatControl.hide(): void
+splatControl.show(): void
+splatControl.isVisible(): boolean
 
 // Expand/collapse panel
 splatControl.expand(): void
@@ -169,11 +191,36 @@ splatControl.off(event, handler): void
 
 #### Events
 
-- `splatload` - Fired when a splat is loaded
+- `splatload` - Fired when a splat is loaded (with `splatId` and `placement`)
 - `splatremove` - Fired when a splat is removed
+- `modelload` - Fired when a model is loaded (with `modelId` and `placement`)
+- `modelremove` - Fired when a model is removed
 - `error` - Fired when an error occurs
 - `expand` - Fired when the panel is expanded
 - `collapse` - Fired when the panel is collapsed
+- `show` / `hide` - Fired when `show()` / `hide()` change the control's visibility
+
+#### Saving and restoring assets
+
+`getAssetPlacement` (or the `placement` on a load event) gives everything needed
+to put an asset back: pass it to `loadSplat` or `loadModel` (by its `type`) with
+its `id` to restore it under the same ID, and use `isIdReserved` so assets
+loaded meanwhile never take a saved ID.
+
+```typescript
+const saved = new Map<string, GaussianSplatAssetPlacement>();
+const control = new GaussianSplatControl({ isIdReserved: (id) => saved.has(id) });
+control.on('splatload', (e) => e.placement && saved.set(e.placement.id, e.placement));
+control.on('modelload', (e) => e.placement && saved.set(e.placement.id, e.placement));
+
+// Later (for example after reopening a project), on a new control:
+const restored = new GaussianSplatControl({ isIdReserved: (id) => saved.has(id) });
+map.addControl(restored);
+for (const { url, type, ...placement } of saved.values()) {
+  const load = type === 'model' ? restored.loadModel : restored.loadSplat;
+  await load.call(restored, url, { ...placement, flyTo: false });
+}
+```
 
 ## Supported Formats
 

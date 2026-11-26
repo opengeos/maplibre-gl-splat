@@ -66,6 +66,65 @@ export interface GaussianSplatControlOptions {
   flyTo?: boolean;
   /** Zoom level when flying to splat. Default: 18. */
   flyToZoom?: number;
+  /**
+   * Marks IDs the control must not hand out when it generates an ID for a new
+   * asset. Generated IDs are `splat-N` / `model-N`; the control already skips
+   * IDs it has loaded, and this lets an app also skip IDs it holds elsewhere
+   * (for example, assets of a saved project that are not reloaded yet), so a
+   * fresh load never takes one. It does not affect an explicit `id` load
+   * option. Default: none reserved.
+   */
+  isIdReserved?: (id: string) => boolean;
+}
+
+/** The kind of asset a control loaded. */
+export type GaussianSplatAssetType = 'splat' | 'model';
+
+/**
+ * Options for {@link GaussianSplatControl.load}, `loadSplat` and `loadModel`.
+ * Placement fields left out fall back to the control's current state.
+ */
+export interface GaussianSplatLoadOptions {
+  /** Longitude of the asset origin. */
+  longitude?: number;
+  /** Latitude of the asset origin. */
+  latitude?: number;
+  /** Altitude of the asset origin in meters. */
+  altitude?: number;
+  /** Rotation in degrees [x, y, z]. */
+  rotation?: [number, number, number];
+  /** Uniform scale. */
+  scale?: number;
+  /**
+   * Load the asset under this ID instead of a generated one, for example to
+   * restore a saved asset under its saved ID. The load rejects, before
+   * fetching anything, if a loaded splat or model already has this ID.
+   */
+  id?: string;
+  /**
+   * Whether to fly to the asset once it is loaded. Overrides the control's
+   * `flyTo` option for this call only.
+   */
+  flyTo?: boolean;
+}
+
+/**
+ * Where a loaded asset sits on the map, as resolved at load time (explicit
+ * options, else the control's state and defaults).
+ */
+export interface GaussianSplatAssetPlacement {
+  /** Asset ID. */
+  id: string;
+  /** Whether the asset is a Gaussian splat or a GLTF/GLB model. */
+  type: GaussianSplatAssetType;
+  /** URL the asset was loaded from. */
+  url: string;
+  longitude: number;
+  latitude: number;
+  altitude: number;
+  /** Rotation in degrees [x, y, z]. */
+  rotation: [number, number, number];
+  scale: number;
 }
 
 /**
@@ -111,6 +170,8 @@ export type GaussianSplatEventHandler = (event: {
   error?: string;
   splatId?: string;
   modelId?: string;
+  /** Placement of the loaded asset (on `splatload` and `modelload`). */
+  placement?: GaussianSplatAssetPlacement;
 }) => void;
 
 /**
@@ -126,6 +187,8 @@ interface SplatLayerInfo {
   longitude: number;
   latitude: number;
   altitude: number;
+  rotation: [number, number, number];
+  scale: number;
 }
 
 /**
@@ -140,6 +203,8 @@ interface ModelLayerInfo {
   longitude: number;
   latitude: number;
   altitude: number;
+  rotation: [number, number, number];
+  scale: number;
 }
 
 /**
@@ -165,6 +230,7 @@ const DEFAULT_OPTIONS: Required<GaussianSplatControlOptions> = {
   defaultAltitude: 0,
   flyTo: true,
   flyToZoom: 18,
+  isIdReserved: () => false,
 };
 
 /**
@@ -230,6 +296,7 @@ export class GaussianSplatControl implements IControl {
   private _modelCounter = 0;
   private _gltfLoader?: GLTFLoader;
   private _idleHandler?: () => void;
+  private _hidden = false;
 
   constructor(options?: GaussianSplatControlOptions) {
     this._options = { ...DEFAULT_OPTIONS, ...options };
@@ -253,6 +320,7 @@ export class GaussianSplatControl implements IControl {
   onAdd(map: MapLibreMap): HTMLElement {
     this._map = map;
     this._container = this._createContainer();
+    if (this._hidden) this._container.style.display = 'none';
     this._render();
 
     // Initialize THREE.js scene
@@ -343,6 +411,37 @@ export class GaussianSplatControl implements IControl {
   }
 
   /**
+   * Show the control's container (button or panel) after {@link hide}.
+   * Loaded assets are drawn either way. Emits `show` when it changes.
+   */
+  show(): void {
+    if (!this._hidden) return;
+    this._hidden = false;
+    if (this._container) this._container.style.display = '';
+    this._emit('show', {});
+  }
+
+  /**
+   * Hide the control's container without removing the control, so its loaded
+   * assets keep drawing (for example, while an app restores assets in the
+   * background). Works before the control is added. Emits `hide` when it
+   * changes.
+   */
+  hide(): void {
+    if (this._hidden) return;
+    this._hidden = true;
+    if (this._container) this._container.style.display = 'none';
+    this._emit('hide', {});
+  }
+
+  /**
+   * Whether the control's container is shown (see {@link hide}).
+   */
+  isVisible(): boolean {
+    return !this._hidden;
+  }
+
+  /**
    * Get the current state.
    */
   getState(): GaussianSplatControlState {
@@ -381,13 +480,7 @@ export class GaussianSplatControl implements IControl {
    */
   async load(
     url: string,
-    options?: {
-      longitude?: number;
-      latitude?: number;
-      altitude?: number;
-      rotation?: [number, number, number];
-      scale?: number;
-    }
+    options?: GaussianSplatLoadOptions
   ): Promise<string> {
     const extension = this._getFileExtension(url);
     if (extension === 'gltf' || extension === 'glb') {
@@ -415,13 +508,7 @@ export class GaussianSplatControl implements IControl {
    */
   async loadSplat(
     url: string,
-    options?: {
-      longitude?: number;
-      latitude?: number;
-      altitude?: number;
-      rotation?: [number, number, number];
-      scale?: number;
-    }
+    options?: GaussianSplatLoadOptions
   ): Promise<string> {
     if (!this._map || !this._mapScene) {
       throw new Error('Map not initialized');
@@ -430,8 +517,16 @@ export class GaussianSplatControl implements IControl {
     const lng = options?.longitude ?? (this._state.longitude || this._map.getCenter().lng);
     const lat = options?.latitude ?? (this._state.latitude || this._map.getCenter().lat);
     const alt = options?.altitude ?? (this._state.altitude || 0);
-    const rotation = options?.rotation ?? this._state.rotation;
+    // Snapshot the rotation so a caller mutating its array mid-load cannot make
+    // the stored placement disagree with the scene.
+    const resolvedRotation = options?.rotation ?? this._state.rotation;
+    const rotation: [number, number, number] = [
+      resolvedRotation[0],
+      resolvedRotation[1],
+      resolvedRotation[2],
+    ];
     const scale = options?.scale ?? this._state.scale;
+    this._assertIdFree(options?.id);
 
     this._state.url = url;
     this._state.loading = true;
@@ -443,6 +538,10 @@ export class GaussianSplatControl implements IControl {
     this._render();
 
     try {
+      // Take the ID before touching the scene, so a failed claim (for example
+      // an isIdReserved callback that throws) leaves nothing behind.
+      const layerId = this._claimId('splat', options?.id);
+
       // Create RTC group for georeferenced positioning
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const rtcGroup = (MTP.Creator as any).createMercatorRTCGroup(
@@ -472,7 +571,6 @@ export class GaussianSplatControl implements IControl {
       this._mapScene.addObject(rtcGroup);
 
       // Store layer info
-      const layerId = `splat-${this._layerCounter++}`;
       this._splatLayers.set(layerId, {
         id: layerId,
         url,
@@ -481,10 +579,12 @@ export class GaussianSplatControl implements IControl {
         longitude: lng,
         latitude: lat,
         altitude: alt,
+        rotation,
+        scale,
       });
 
       // Fly to location
-      if (this._options.flyTo) {
+      if (options?.flyTo ?? this._options.flyTo) {
         this._map.flyTo({
           center: [lng, lat],
           zoom: this._options.flyToZoom,
@@ -498,7 +598,11 @@ export class GaussianSplatControl implements IControl {
       this._state.loading = false;
       this._state.status = `Loaded: ${this._getFilename(url)}`;
       this._render();
-      this._emit('splatload', { url, splatId: layerId });
+      this._emit('splatload', {
+        url,
+        splatId: layerId,
+        placement: this.getAssetPlacement(layerId) ?? undefined,
+      });
 
       return layerId;
     } catch (err) {
@@ -523,13 +627,7 @@ export class GaussianSplatControl implements IControl {
    */
   async loadModel(
     url: string,
-    options?: {
-      longitude?: number;
-      latitude?: number;
-      altitude?: number;
-      rotation?: [number, number, number];
-      scale?: number;
-    }
+    options?: GaussianSplatLoadOptions
   ): Promise<string> {
     if (!this._map || !this._mapScene) {
       throw new Error('Map not initialized');
@@ -539,8 +637,14 @@ export class GaussianSplatControl implements IControl {
     const lat = options?.latitude ?? (this._state.latitude || this._map.getCenter().lat);
     const alt = options?.altitude ?? (this._state.altitude || 0);
     // Use model-specific rotation defaults for GLTF/GLB
-    const rotation = options?.rotation ?? this._options.defaultModelRotation;
+    const resolvedRotation = options?.rotation ?? this._options.defaultModelRotation;
+    const rotation: [number, number, number] = [
+      resolvedRotation[0],
+      resolvedRotation[1],
+      resolvedRotation[2],
+    ];
     const scale = options?.scale ?? this._state.scale;
+    this._assertIdFree(options?.id);
 
     this._state.url = url;
     this._state.loading = true;
@@ -575,6 +679,10 @@ export class GaussianSplatControl implements IControl {
       const gltf = await this._gltfLoader.loadAsync(url);
       const modelScene = gltf.scene;
 
+      // Take the ID before touching the scene, so a load that lost its
+      // explicit ID to a concurrent one leaves nothing behind.
+      const layerId = this._claimId('model', options?.id);
+
       // Apply scale with Y-axis flip for proper GLTF orientation
       // MapLibre uses a different coordinate system than GLTF
       // Scale is applied to both RTC group and model (like splats)
@@ -585,7 +693,6 @@ export class GaussianSplatControl implements IControl {
       this._mapScene.addObject(rtcGroup);
 
       // Store layer info
-      const layerId = `model-${this._modelCounter++}`;
       this._modelLayers.set(layerId, {
         id: layerId,
         url,
@@ -594,10 +701,12 @@ export class GaussianSplatControl implements IControl {
         longitude: lng,
         latitude: lat,
         altitude: alt,
+        rotation,
+        scale,
       });
 
       // Fly to location
-      if (this._options.flyTo) {
+      if (options?.flyTo ?? this._options.flyTo) {
         this._map.flyTo({
           center: [lng, lat],
           zoom: this._options.flyToZoom,
@@ -611,7 +720,11 @@ export class GaussianSplatControl implements IControl {
       this._state.loading = false;
       this._state.status = `Loaded: ${this._getFilename(url)}`;
       this._render();
-      this._emit('modelload', { url, modelId: layerId });
+      this._emit('modelload', {
+        url,
+        modelId: layerId,
+        placement: this.getAssetPlacement(layerId) ?? undefined,
+      });
 
       return layerId;
     } catch (err) {
@@ -694,6 +807,72 @@ export class GaussianSplatControl implements IControl {
     };
   }
 
+  /**
+   * Get all loaded model layer IDs.
+   */
+  getModelIds(): string[] {
+    return Array.from(this._modelLayers.keys());
+  }
+
+  /**
+   * Get where a loaded splat or model sits: its type, URL, position, rotation
+   * and scale as resolved when it loaded. Returns null for an unknown ID.
+   * Pass the result back as load options (with `id`) to restore the asset.
+   */
+  getAssetPlacement(layerId: string): GaussianSplatAssetPlacement | null {
+    const splat = this._splatLayers.get(layerId);
+    const model = splat ? undefined : this._modelLayers.get(layerId);
+    const layer = splat ?? model;
+    if (!layer) return null;
+    return {
+      id: layer.id,
+      type: splat ? 'splat' : 'model',
+      url: layer.url,
+      longitude: layer.longitude,
+      latitude: layer.latitude,
+      altitude: layer.altitude,
+      rotation: [layer.rotation[0], layer.rotation[1], layer.rotation[2]],
+      scale: layer.scale,
+    };
+  }
+
+  /**
+   * Whether an ID belongs to a loaded splat or model.
+   */
+  private _isIdLoaded(id: string): boolean {
+    return this._splatLayers.has(id) || this._modelLayers.has(id);
+  }
+
+  /**
+   * Reject an explicit ID that a loaded asset already uses.
+   */
+  private _assertIdFree(id: string | undefined): void {
+    if (id !== undefined && this._isIdLoaded(id)) {
+      throw new Error(`An asset with id "${id}" is already loaded`);
+    }
+  }
+
+  /**
+   * Take the ID for an asset that just loaded: the explicit one, else the
+   * next free `splat-N` / `model-N` that is neither loaded nor reserved.
+   */
+  private _claimId(type: GaussianSplatAssetType, explicit: string | undefined): string {
+    if (explicit !== undefined) {
+      // Another load may have taken it while this one was fetching.
+      this._assertIdFree(explicit);
+      return explicit;
+    }
+    let index = type === 'splat' ? this._layerCounter : this._modelCounter;
+    let id = `${type}-${index}`;
+    while (this._isIdLoaded(id) || this._options.isIdReserved(id)) {
+      index += 1;
+      id = `${type}-${index}`;
+    }
+    if (type === 'splat') this._layerCounter = index + 1;
+    else this._modelCounter = index + 1;
+    return id;
+  }
+
   private _removeAllLayers(): void {
     for (const [layerId] of this._splatLayers) {
       this.removeSplat(layerId);
@@ -705,7 +884,13 @@ export class GaussianSplatControl implements IControl {
 
   private _emit(
     event: GaussianSplatEvent,
-    extra?: { url?: string; error?: string; splatId?: string; modelId?: string }
+    extra?: {
+      url?: string;
+      error?: string;
+      splatId?: string;
+      modelId?: string;
+      placement?: GaussianSplatAssetPlacement;
+    }
   ): void {
     const handlers = this._eventHandlers.get(event);
     if (!handlers) return;
